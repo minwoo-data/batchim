@@ -209,6 +209,7 @@ Before generating ANY search query, determine today's date from the system conte
   - 실패한 URL과 우회 시도 결과를 `sources/failed_urls.txt`에 함께 기록
 - Formulate new queries based on findings
 - Use multiple search modalities (web, academic, code)
+- **[M3, 선택] 후보 구절 랭킹:** 많은 구절을 fetch했으면 `retrieval.py`로 query expansion → hybrid(BM25+임베딩) → rerank → top-k로 추려 검증 대상에 우선순위를 준다 (NFR-5 폴백; recall 보조일 뿐 — 추려진 구절도 전부 entail 게이트를 통과해야 함).
 
 ### Phase 4: Source Triangulation
 - Compare findings across multiple sources
