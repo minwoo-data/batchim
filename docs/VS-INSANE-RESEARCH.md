@@ -84,8 +84,11 @@ exists and computes the verdict**, the **panel** catches what code can't
    dedup/semantic. *Open:* timestamp-burst clustering and a source-funding graph.
 8. **External anchor for signing** (NG5 mitigation) — optional git-commit / RFC-3161
    timestamp / transparency-log of the manifest sha, so audit resists a motivated author.
-9. **Lock/heartbeat** (NFR-4, specced, unbuilt) — PID+start-time single-session lock with
-   stale reclaim, for real concurrency safety.
+9. ~~**Lock/heartbeat**~~ **DONE** (`lock.py`): single-session lock {pid, start_token,
+   heartbeat_ts} in a file separate from `CURRENT` (FR-S3). "PID alive" = same pid AND
+   start_token (defends PID reuse); reclaim only on stale AND dead, `stale AND alive` ⇒
+   refuse + --force. Deterministic (clock + pid-liveness injected). *Open:* wiring the
+   acquire/heartbeat calls into the SKILL.md phase loop.
 10. **Inspectable ledger UI** — render each verified claim with its proof spans + panel
     votes in the report, so a human can audit *why* it passed, not just *that* it passed.
 11. **Benchmark in CI** — run the (signed) benchmark on every change; track false-entail
