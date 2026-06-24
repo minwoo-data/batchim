@@ -18,4 +18,19 @@ Process: ≥2 independent labelers, blind to 받침's verdict; compute Cohen's �
 (gate ≥ 0.7); adjudicate + log disagreements. Size n for a per-stratum
 false-entail CI.
 
-Status: TODO — finalize rubric with the non-author validator, then label.
+## File schema & tooling
+- `unit_id = "<claim_id>::<source_id>"` (one cited span = one unit).
+- Each labeler writes `bench/labels/labeler_<name>.jsonl`:
+  `{"unit_id":"clm_001::src_003","label":"entails|neutral|contradicts","note":"…"}`
+- **κ gate:** `python bench/kappa.py` → per-pair Cohen's κ + disagreement list,
+  exits non-zero unless min pairwise κ ≥ 0.7. Below the gate ⇒ refine edge-cases
+  and re-label (don't adjudicate a noisy set).
+- **Adjudicate** the listed disagreements → `bench/labels/gold.jsonl` (same schema).
+- **Score:** `python bench/score_benchmark.py --session <run> --gold gold.jsonl
+  --strata strata.json` → false-entail / precision / recall, **stratified by
+  failure-mode** (`strata.json` = `{claim_id: fabrication|number-swap|quote-mining|control}`).
+  It runs the gold labels through the same §6.7 `decide.py`, so gold_status is
+  apples-to-apples with the system status.
+
+Status: TODO — finalize rubric with the non-author validator, then label. Tooling
+(`kappa.py`, `score_benchmark.py`) is ready and tested.

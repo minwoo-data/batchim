@@ -9,8 +9,8 @@ Source of truth: [`PRD.md`](PRD.md) v0.4. MVP = **M0 + M1 + M2** (panel is in th
 | 0.1 | Fork `fivetaku/insane-research` → rebrand 받침 (plugin.json, command `/batchim`, skill `batchim-main`, NOTICE) | §13 | ✅ done (this commit) |
 | 0.2 | Freeze **benchmark**: 5+ topics, third-party/criteria-selected (not author cherry-pick), incl. an adversarial slice (contested/legal/causal/numeric) | §8, §9, R7 | ☐ todo → `bench/topics.json` |
 | 0.3 | Record **insane-research baseline** metrics on the frozen topics (leak_rate, citation, false-entail by human label) | §8 M0, §9 | ☐ todo → `bench/baseline/` |
-| 0.4 | Build **human-label set**: ≥2 independent labelers, blind, rubric, unit = `(atomic_claim, span)`, **κ ≥ 0.7**, `n` sized for false-entail CI, full-source adversarial subset | §8 protocol | ☐ todo → `bench/labels/` |
-| 0.5 | **Sign** benchmark topic-set hash + threshold vector + human-label-set hash (frozen) | FR-S1 | ☐ todo |
+| 0.4 | Build **human-label set**: ≥2 independent labelers, blind, rubric, unit = `(atomic_claim, span)`, **κ ≥ 0.7**, `n` sized for false-entail CI, full-source adversarial subset | §8 protocol | **Tooling ready** (`bench/kappa.py` κ-gate, `bench/score_benchmark.py` §9 metrics, `RUBRIC.md`). ☐ real labelers (human step). |
+| 0.5 | **Sign** benchmark topic-set hash + threshold vector + human-label-set hash (frozen) | FR-S1 | **Done** (`bench/freeze.py` — signs topic/threshold/label hashes; `verify` detects post-freeze drift). ☐ run once topics+labels locked. |
 
 ## M1a — Vertical slice (FIRST, measures the core experiment)
 Goal: **measure false-entail rate vs human labels** before any durability machinery.
