@@ -17,7 +17,7 @@ Goal: **measure false-entail rate vs human labels** before any durability machin
 - [x] `classify_risk.py` — deterministic risk + compound-claim atomization (regex/gazetteer/POS, NO LLM/network); risk_recall ≥ 0.98 on fixture; gazetteer_hash pinned. (§6.1) ✅ 9e9feb6
 - [x] `snapshot.py` — freeze source text + content hash. (§6.5) ✅ f9d1a61
 - [x] `entail_gate.py` — code half done: join raw verifier verdicts → anchors (span-match + numeric) → bound `entailment_verdicts.jsonl`. (§6.3, App B) ✅ e9ca82a · *pending: SKILL.md wires the isolated-verifier subagent spawn → `raw_verdicts.jsonl` (data-flow lock).*
-- [ ] minimal `validate_ledger.py` decide-stage producing `verified_claims.json` via §6.7 (no signing yet).
+- [x] minimal `validate_ledger.py` decide-stage producing `verified_claims.json` via §6.7 (no signing yet). ✅ e93295b — SOLE joiner; FR-A5 binding + FR-X3 coverage; M1b adds signing.
 - [ ] **Experiment:** run M1a on the M0 benchmark, compute false-entail rate stratified by failure-mode. **Gate:** is M1a meaningfully better than baseline on fabrication/number? (quote-mining expected flat until M2.)
 
 ## M1b — Durability
