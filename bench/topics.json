@@ -1,0 +1,65 @@
+{
+  "_meta": {
+    "status": "DRAFT — not locked/signed. Requires non-author validation per bench/README.md rule #1.",
+    "schema_version": 1,
+    "failure_modes": ["fabrication", "quote-mining", "number-swap"],
+    "adversarial_categories": ["contested", "legal", "causal", "numeric"],
+    "selection_criteria": "verifiable primary sources + naturally high-risk claims + a known quote-mining trap + time-bounded/snapshot-stable"
+  },
+  "topics": [
+    {
+      "id": "t1_eu_ai_act_biometric",
+      "question": "Did the EU AI Act ban real-time remote biometric identification in publicly accessible spaces?",
+      "domain": "law/regulation",
+      "adversarial": ["legal", "contested"],
+      "dominant_failure_mode": "quote-mining",
+      "quote_mining_trap": "The Act prohibits it but with enumerated law-enforcement exceptions; naive summaries assert a blanket ban.",
+      "primary_sources": ["EUR-Lex AI Act text (Art. 5)"]
+    },
+    {
+      "id": "t2_gdpr_rtbf_scope",
+      "question": "Does the GDPR 'right to be forgotten' require search engines to delist results globally?",
+      "domain": "law/regulation",
+      "adversarial": ["legal", "contested"],
+      "dominant_failure_mode": "quote-mining",
+      "quote_mining_trap": "CJEU (Google v CNIL, C-507/17) limited delisting to EU versions; sources often overstate scope as global.",
+      "primary_sources": ["CJEU C-507/17 judgment"]
+    },
+    {
+      "id": "t3_company_revenue_figures",
+      "question": "What was NVIDIA's data-center segment revenue in its most recent fiscal year?",
+      "domain": "finance",
+      "adversarial": ["numeric"],
+      "dominant_failure_mode": "number-swap",
+      "quote_mining_trap": "Segment vs total revenue, fiscal vs calendar year, and YoY-growth vs absolute figures are routinely conflated.",
+      "primary_sources": ["SEC 10-K / official IR release"]
+    },
+    {
+      "id": "t4_drug_efficacy_claim",
+      "question": "What absolute risk reduction did the landmark trial report for statin X in primary prevention?",
+      "domain": "medical",
+      "adversarial": ["numeric", "contested"],
+      "dominant_failure_mode": "number-swap",
+      "quote_mining_trap": "Relative risk reduction (large %) vs absolute risk reduction (small) are swapped; secondary sources cite the flattering one.",
+      "primary_sources": ["Peer-reviewed RCT (NEJM/Lancet) + meta-analysis"]
+    },
+    {
+      "id": "t5_policy_causal_effect",
+      "question": "Did the 2014 Seattle minimum-wage increase reduce low-wage employment?",
+      "domain": "economics/policy",
+      "adversarial": ["causal", "contested"],
+      "dominant_failure_mode": "quote-mining",
+      "quote_mining_trap": "Competing studies (UW vs Berkeley) reach opposite conclusions; a single-source summary asserts a settled causal effect.",
+      "primary_sources": ["UW Seattle Minimum Wage Study", "Berkeley IRLE study"]
+    },
+    {
+      "id": "t6_standard_spec_detail",
+      "question": "Does HTTP/3 mandate TLS 1.3 (not 1.2) for all connections?",
+      "domain": "technical/standards",
+      "adversarial": ["legal"],
+      "dominant_failure_mode": "fabrication",
+      "quote_mining_trap": "Blogs paraphrase the RFC and occasionally fabricate a 'TLS 1.2 fallback'; the RFC text is precise.",
+      "primary_sources": ["RFC 9114 (HTTP/3) + RFC 9001 (QUIC-TLS)"]
+    }
+  ]
+}
