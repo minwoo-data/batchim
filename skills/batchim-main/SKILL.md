@@ -218,34 +218,50 @@ Before generating ANY search query, determine today's date from the system conte
 
 #### ⚠️ 핵심 주장 검증 레이어 (Claim Verification Layer) — 필수 산출 계약
 
-핵심 주장(수치·점유율·날짜·법령·인과 등 "틀리면 손해 큰" 주장)은 매끄러운 문장으로 단정하기 전에 **claim ledger**를 만든다. ledger는 **반드시 `artifacts/claim_ledger.jsonl`에 한 줄당 1개 레코드(JSONL)**로 저장한다 — 이 파일이 Phase 6의 `validate_ledger.py` 게이트 입력이다. 각 핵심 주장 1건당 레코드:
+핵심 주장(수치·점유율·날짜·법령·인과 등 "틀리면 손해 큰" high-risk 주장)은 단정하기 전에 **author-owned ledger 2종**을 JSONL로 만든다 — 이 파일들이 Phase 4.5 받침 게이트의 입력이다.
 
+`artifacts/claim_ledger.jsonl` (주장 1건당 1줄; `claimed_*`만, status/confidence는 쓰지 않는다):
 ```json
-{
-  "claim_id": "clm_001",
-  "text": "주장 텍스트",
-  "risk": "high | normal",
-  "claim_type": "numeric | legal | causal | descriptive",
-  "source_ids": ["src_001", "src_003"],
-  "counter_search": "반증 검색 1회 결과 요약 (high-risk 필수)",
-  "counter_refuted": false,
-  "conflicting": false,
-  "primary_source": true
-}
+{ "claim_id":"clm_001", "text":"주장 텍스트(원자적 단일 주장)", "claim_text_hash":"sha256:…",
+  "claimed_risk":"high|normal", "atomic":true, "claimed_source_ids":["src_001","src_003"], "schema_version":1 }
 ```
 
-> **`status`/`confidence`는 직접 쓰지 않는다.** `validate_ledger.py`가 source_ids를 레지스트리와 대조해 독립 도메인 수·counter_search 유무·1차소스·등급을 보고 **status를 계산**한다. `risk:"high"`는 수치/점유율/날짜/법령/인과/재무 주장에 부여한다. `source_ids`는 `sources/sources.jsonl`의 `id`와 정확히 일치해야 한다(불일치 시 게이트가 하드 에러).
+`artifacts/claim_evidence_refs.jsonl` (검증자가 볼 (주장×소스×인용) 1건당 1줄):
+```json
+{ "claim_id":"clm_001", "source_id":"src_003", "cited_quote":"소스에서 발췌한 근거 인용문",
+  "context_window_id":"cw_007", "schema_version":1 }
+```
 
-**Abstention 강제 규칙 (불가침)** — 다음 중 하나라도 해당하면 `status=unresolved`("미확정")로 두고 **본문에서 단정 금지**. 반드시 "미확정 / 확인 필요"로 표기하고 `Unresolved` 섹션에 모은다:
-- 독립 출처 2개 미만 (`source_count < 2`)
-- 출처 간 충돌이 해소되지 않음
-- 1차 소스 미도달 (강한 주장인데 `primary_source=false`)
+> **status는 코드가 계산한다 (§6.7).** author는 주장과 인용만 기록하고, `claimed_risk`/`status`를 신뢰받지 못한다. `text`는 **원자적**이어야 한다 — 복합 주장("X **그리고** Y")은 `classify_risk.py`가 atomize하거나 atomize 불가 시 `needs_atomization`으로 표시해 게이트가 fail-closed 처리한다. `*_source_ids`는 `sources/sources.jsonl`의 `id`와 정확히 일치해야 한다(불일치 시 게이트 exit 2).
 
-**경량 red-team (필수)** — 각 핵심 주장마다 **반증 counter-search 1회**를 수행한다. 신뢰할 만한 반박이 나오면 `status=refuted`로 두고 `Refuted` 섹션으로 보낸다(본문 단정 금지).
+→ 이 레이어는 **high-risk 주장에만** 적용한다. 폭넓은 서사·맥락은 cite-and-write로 자유롭게 쓰되, 핵심 주장은 받침 게이트를 통과한 것만 본문에 단정한다.
 
-**1차 소스 우선** — 정부/법령 DB(예: law.go.kr·moleg), 공시(SEC/IR), 피어리뷰를 2차 애그리게이터·블로그보다 **먼저** 시도하고, `quality_rubric.md`의 Legal/Policy·Business 기준으로 등급을 매겨 `primary_source` 충족 여부를 ledger에 기록한다.
+### Phase 4.5: 받침 게이트 파이프라인 (불가침 — 코드가 검증을 강제)
 
-→ 이 레이어는 **핵심 주장에만** 적용한다. 본문의 폭넓은 서사·맥락·가독성은 그대로 유지하되, 핵심 수치/주장만 ledger 게이트를 통과시킨다.
+ledger가 준비되면 Phase 5 합성 전에 **아래 5단계를 순서대로** 실행한다. 각 스크립트는 `--session "RESEARCH/{topic}_{timestamp}"`를 받는다. SP는 `${CLAUDE_PLUGIN_ROOT}/skills/batchim-main/scripts`.
+
+```bash
+# 1) 독립성 분할 (canonical-URL + simhash) → independence_partition.json (Phase 3.5에서 소스셋 동결 후)
+python3 "$SP/dedup.py"          --session "$S"
+# 2) 결정론적 위험 분류 + atomization (NO LLM) → risk_classifications.jsonl
+python3 "$SP/classify_risk.py"  --session "$S"
+# 3) 소스 텍스트 동결 + content_hash → snapshots/<id>.txt, sources.jsonl 갱신
+python3 "$SP/snapshot.py"       --session "$S"
+# 4) [LLM] 격리 검증자 서브에이전트 → raw_verdicts.jsonl  (아래 계약 참조)
+# 5) anchors(verbatim span + numeric) 적용 + 바인딩 → entailment_verdicts.jsonl
+python3 "$SP/entail_gate.py"    --session "$S"
+```
+
+**4단계 — 격리 검증자 서브에이전트 (데이터 흐름 락의 핵심)**
+
+`risk_classifications.jsonl`에서 `computed_risk=="high"`이고 `atomic==true`인 주장마다, `claim_evidence_refs.jsonl`의 각 (주장×인용 소스)에 대해 **FRESH 격리 서브에이전트 1개**를 띄운다 (throttle 2–3 concurrent, Rate-Limit Guard 준수):
+
+- 에이전트에 **오직** `(atomic_claim_text, cited_quote + 고정 컨텍스트 윈도우, frozen snapshot 소스 텍스트)`만 준다. 다른 주장·다른 소스·웹 접근 금지(격리).
+- **structured output 강제**: `{ "claim_id","source_id","label":"entails|neutral|contradicts","evidence_span":"<소스에서 그대로 옮긴 verbatim 근거 구절>","span_state":"done|failed","fail_reason":null,"model_id":"<model>","verifier_prompt_hash":"sha256:<프롬프트 해시>" }`
+- `evidence_span`은 **반드시 frozen snapshot에 그대로 존재하는 verbatim**이어야 한다(패러프레이즈 금지) — anchors가 코드로 대조한다.
+- 모든 결과를 `artifacts/raw_verdicts.jsonl`에 1줄씩 append. timeout → `span_state:"failed"` + 1회 재시도(별도 예산); 그래도 실패면 그대로 기록(게이트가 fail-closed).
+
+> 검증자는 **판정(label)만** 낸다. verbatim 일치·숫자/날짜 일치는 `entail_gate.py`가 **코드로** 강제하고, 최종 status는 `validate_ledger.py`가 §6.7로 계산한다 — LLM이 verified를 쓸 수 없다.
 
 ### Phase 5: Knowledge Synthesis
 - Structure content logically
@@ -271,28 +287,28 @@ Before generating ANY search query, determine today's date from the system conte
 
 #### 핵심 주장 검증 레이어 마감 (필수 — 결정론적 게이트)
 
-**검증은 "권고"가 아니라 코드 게이트다.** `artifacts/claim_ledger.jsonl`과 `sources/sources.jsonl`이 준비되면 반드시 아래를 실행한다(Phase 5 합성 전에 1차 실행해 `verified_claims.json`을 만들고, Phase 7 직전에 재실행해 통과를 확정):
+**검증은 "권고"가 아니라 코드 게이트다.** Phase 4.5의 entail_gate까지 끝나면(`entailment_verdicts.jsonl` 생성됨) **단일 조인자**를 돌려 `verified_claims.json`을 만든다(Phase 5 합성 전 1차, Phase 7 직전 재실행으로 확정):
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/batchim-main/scripts/validate_ledger.py" --session "RESEARCH/{topic}_{timestamp}"
 ```
 
-종료 코드에 따라:
-- **exit 2 (하드 에러)** — 스키마 깨짐·미등록 source id·A-E 등급 모순. 데이터를 고치고 재실행. **절대 Phase 7로 진행 금지.**
-- **exit 1 (프로세스 위반)** — high-risk 주장에 `counter_search` 누락. 해당 주장에 반증 검색 1회를 수행해 ledger를 갱신하고 재실행.
-- **exit 0 (통과)** — `outputs/{verified,unresolved,refuted}_claims.json` 생성, `state.json.verification.signature` 기록 완료. 이제 Phase 7 진행 가능.
+`validate_ledger.py`는 sources + claim_ledger + risk_classifications + independence_partition + entailment_verdicts를 조인해 high-risk atomic 주장마다 §6.7로 status를 **계산**한다. 종료 코드:
+- **exit 2 (구조적 에러)** — 스키마 깨짐·미등록 source id·바인딩 불일치(snapshot_hash/claim_text_hash/grade copy)·커버리지 위반. 데이터를 고치고 재실행. **절대 Phase 7로 진행 금지.**
+- **exit 1 (정상 기권)** — verified high-risk 주장이 0건(또는 cap-exhausted degraded). 본문에 단정할 핵심 주장이 없다는 뜻 — 더 검색/검증하거나, 기권 상태로 보고한다.
+- **exit 0 (통과)** — `outputs/{verified,unresolved,refuted}_claims.json` 생성. Phase 7 진행 가능.
 
 마감 점검:
-- **`state.json`에 `verification.signature`가 있고 `verification.passed=true`인지** 확인한다(없으면 게이트 미실행 = 미완).
-- 보고서에 `Confidence` / `Refuted` / `Unresolved` 3개 섹션을 노출한다.
-- `unresolved`/`refuted` 주장이 본문에 단정형으로 섞이지 않았는지 최종 점검한다(verified-only 합성 게이트 위반 여부).
+- 보고서에 `Verified` / `Refuted` / `Unresolved` 3개 섹션을 노출한다.
+- `unresolved`/`refuted` 주장이 본문에 단정형으로 섞이지 않았는지 최종 점검(verified-only 합성 게이트 위반 여부).
+- 서명(signed manifest)·`CURRENT` 커밋은 **M1b**에서 추가된다(M1a는 결정 산출까지).
 
 #### Strict 모드 (옵트인 하이브리드 검증)
 
-기본 모드는 빠르고 넓게 — 핵심 주장 ledger + abstention으로 충분하다. 그러나 **틀리면 손해가 큰 주제(법률·의료·재무·규제·핵심 수치)** 이거나 사용자가 `strict`를 명시하면, ledger의 `unresolved` 또는 high-risk 주장만 골라 **deep-research Workflow 하네스(`/deep-research`)에 위임해 적대적(3표) 재검증**한다.
+기본 모드는 빠르고 넓게 — 받침 게이트(§6.7) + abstention으로 충분하다. **받침의 native 적대적 재검증은 M2 `panel.py`(N=3 prompt-diverse 렌즈, 2-of-3 합의)** 이며 high-risk/contested 주장에 붙는다. M2 이전(또는 추가 외부 교차검증을 원할 때)에는 **틀리면 손해가 큰 주제**이거나 사용자가 `strict`를 명시하면 게이트의 `unresolved`/high-risk 주장만 골라 **deep-research Workflow(`/deep-research`)에 위임해 3표 재검증**할 수 있다.
 
 흐름:
-1. Phase 4 ledger에서 `status=unresolved` 또는 high-risk(강한 수치·법령·인과) 주장을 추린다.
+1. `outputs/unresolved_claims.json`(게이트 산출) 또는 high-risk 주장을 추린다.
 2. 각 주장을 검증 가능한 질문으로 바꿔 `Workflow({name: "deep-research", args: "<질문>"})`에 넘긴다 (Workflow는 결정론적 3표 반박으로 confirm/refute).
 3. 결과를 ledger에 머지: Workflow confirmed → confidence 상향, refuted → Refuted 섹션, 여전히 inconclusive → Unresolved 유지.
 4. **기본 모드는 이 단계를 건너뛴다(빠름).** strict 모드만 감사 가능한 재검증을 붙인다.
@@ -468,10 +484,11 @@ For complete source quality assessment rubric:
 }
 ```
 
-### sources.jsonl Schema (one JSON per line)
+### sources.jsonl Schema (one JSON per line; Appendix A)
 ```json
-{"id": "src_001", "url": "https://...", "title": "Article Title", "author": "Author", "date": "2024-06-15", "domain": "nature.com", "type": "academic", "quality_rating": "A", "snippet": "relevant excerpt...", "claims": ["claim1"], "verified": true}
+{"id": "src_001", "url": "https://...", "canonical_url": "https://...", "domain": "nature.com", "quality_rating": "A", "fetched_at": "2026-06-24T...", "content_hash": "sha256:…", "snapshot_path": "snapshots/src_001.txt", "byline": null, "wire": null, "schema_version": 1}
 ```
+> `content_hash`/`snapshot_path`는 `snapshot.py`가 채운다. **`verified` 같은 LLM-set 상태 필드는 두지 않는다** — 검증 status는 게이트가 계산한다.
 
 For detailed phase input/output contracts:
 `${CLAUDE_PLUGIN_ROOT}/skills/batchim-main/references/phase_contracts.md`
@@ -648,10 +665,13 @@ State management scripts are available at:
 
 | Script | Purpose | 권위 |
 |--------|---------|------|
-| `validate_ledger.py` | **검증 게이트 (필수).** claim_ledger + sources를 읽어 status를 결정론적으로 계산, `verified_claims.json` 생산, `state.json`에 서명 기록 | **authoritative** — Phase 5/7 진입 게이트 |
-| `eval_report.py` | **평가 채점기 (필수).** 본문이 검증 계약을 지켰는지 측정 — leak/citation-resolution/orphan/coverage 4지표, `eval_report.json` 생산 | **authoritative** — Phase 7 마감 자기검증 |
-| `orchestrator.py` | 세션 폴더/`state.json` 생성·소스 append 등 **상태 헬퍼**. 단, 내부 phase 전이 로직은 권위가 없다(LLM이 SKILL.md 흐름으로 오케스트레이션) | helper (정적 자산) |
-| `pipelines.py` | agent prompt 템플릿·clarification·synthesis 프롬프트 **정적 자산**. `generate_research_plan()` 등 빈 스텁 함수는 실행 경로가 아니다 | helper (정적 자산) |
+| `dedup.py` | **게이트 (Phase 3.5).** canonical-URL + simhash로 `independence_partition.json`(source→cluster, frozen) 생산 | **authoritative** |
+| `classify_risk.py` | **게이트 (Phase 4.5).** 결정론적 high-risk 분류 + compound atomization(NO LLM) → `risk_classifications.jsonl` + gazetteer_hash | **authoritative** |
+| `snapshot.py` | **게이트 (Phase 4.5).** 소스 텍스트 동결 + content_hash → `snapshots/<id>.txt`, sources.jsonl 갱신 | **authoritative** |
+| `entail_gate.py` | **게이트 (Phase 4.5).** raw_verdicts에 anchors(verbatim span + numeric) 적용·바인딩 → `entailment_verdicts.jsonl`. (`anchors.py` 사용) | **authoritative** |
+| `validate_ledger.py` | **단일 조인자 (필수).** 모든 게이트 산출을 조인, §6.7로 status 계산(`decide.py`), `verified_claims.json` 생산. 이것만 합성 allowlist를 만든다 | **authoritative** — Phase 5/7 진입 게이트 |
+| `eval_report.py` | **평가 채점기 (필수).** 본문이 검증 계약을 지켰는지 측정 — leak/citation-resolution/orphan/coverage, `eval_report.json` | **authoritative** — Phase 7 마감 |
+| `orchestrator.py` / `pipelines.py` | 세션·state 헬퍼, agent prompt 정적 자산. phase 전이/plan 스텁은 실행 권위 없음(LLM이 이 SKILL.md로 오케스트레이션) | helper (정적 자산) |
 
 > **오케스트레이션은 프롬프트(이 SKILL.md)가, 검증은 코드(`validate_ledger.py`)가 담당한다.** `orchestrator.py`/`pipelines.py`의 state-machine·plan 스텁은 참고용 헬퍼일 뿐 실행 권위가 없으니, 검증/합성 게이트는 반드시 `validate_ledger.py`로 강제한다.
 
