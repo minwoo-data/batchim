@@ -346,8 +346,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/batchim-main/scripts/validate_ledger.py" -
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/batchim-main/scripts/eval_report.py" --session "RESEARCH/{topic}_{timestamp}"
 ```
 
-- `verdict: FAIL`이면(미검증/반박 주장이 본문에 샜거나 인용이 레지스트리에 없음) **고쳐서 다시 돌린다** — 그 상태로 마감 금지.
-- 지표(`leak_rate`·`citation_resolution_rate`·`orphan_source_rate`·`verified_coverage_rate`)는 `outputs/eval_report.json`에 저장된다. 게이트 on/off A/B나 회귀 추적에 쓴다.
+- **`verdict: FAIL`(exit 2 — 마감 금지)** 조건(FR-X2): leak 또는 dangling 인용, 또는 `missing_entailment_proof_rate>0`, 또는 `citation_resolution<100%`, 또는 coverage 불변식 실패, 또는 **매니페스트 미서명/superseded**(FR-X1/S4). FAIL이면 고쳐서 재실행.
+- 지표는 `outputs/eval_report.json`에 저장된다(§9): 구조 — `citation_resolution_rate`·`missing_entailment_proof_rate`·`span_match_rate`·`coverage_ok`; 정직성 — `leak_rate`·`verified_coverage_rate`·`orphan_source_rate`·`degraded_verdict_rate`; 무결성 — `manifest_ok`. claim 텍스트는 `claim_ledger.jsonl`에서 claim_id로 조인하며, high-risk `verified`와 비-high-risk `cite_write`를 구분한다.
 
 ---
 
@@ -695,7 +695,7 @@ State management scripts are available at:
 | `snapshot.py` | **게이트 (Phase 4.5).** 소스 텍스트 동결 + content_hash → `snapshots/<id>.txt`, sources.jsonl 갱신 | **authoritative** |
 | `entail_gate.py` | **게이트 (Phase 4.5).** raw_verdicts에 anchors(verbatim span + numeric) 적용·바인딩 → `entailment_verdicts.jsonl`. (`anchors.py` 사용) | **authoritative** |
 | `validate_ledger.py` | **단일 조인자 (필수).** 모든 게이트 산출을 조인, §6.7로 status 계산(`decide.py`), `verified_claims.json` 생산. 이것만 합성 allowlist를 만든다 | **authoritative** — Phase 5/7 진입 게이트 |
-| `eval_report.py` | **평가 채점기 (필수).** 본문이 검증 계약을 지켰는지 측정 — leak/citation-resolution/orphan/coverage, `eval_report.json` | **authoritative** — Phase 7 마감 |
+| `eval_report.py` | **Phase-7 하드게이트 (§9, 필수).** 새 스키마 정합(텍스트는 ledger 조인, high-risk verified vs cite_write 구분). 구조지표(citation/missing-proof/span-match/coverage) + 정직성(leak/coverage/orphan/degraded) + 무결성(manifest) → FAIL=exit 2 | **authoritative** — Phase 7 마감 |
 | `orchestrator.py` / `pipelines.py` | 세션·state 헬퍼, agent prompt 정적 자산. phase 전이/plan 스텁은 실행 권위 없음(LLM이 이 SKILL.md로 오케스트레이션) | helper (정적 자산) |
 
 > **오케스트레이션은 프롬프트(이 SKILL.md)가, 검증은 코드(`validate_ledger.py`)가 담당한다.** `orchestrator.py`/`pipelines.py`의 state-machine·plan 스텁은 참고용 헬퍼일 뿐 실행 권위가 없으니, 검증/합성 게이트는 반드시 `validate_ledger.py`로 강제한다.

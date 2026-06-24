@@ -1,31 +1,28 @@
 #!/usr/bin/env python3
 """
-eval_report.py — batchim **결정론적 평가 채점기** (측정 도구, 게이트 아님).
+eval_report.py — 받침 **Phase-7 평가 채점기 / 하드게이트** (PRD §9, FR-X2).
 
-목적: 검증 게이트(validate_ledger.py)가 "진짜 효과 있는지"를 숫자로 재기 위한 계측기.
-LLM judge 없이 코드로 계산 가능한 4개 지표만 측정한다 → 재현 가능, A/B 비교 가능.
+검증 게이트가 실제로 지켜졌는지 코드로 계측한다(LLM judge 없음 → 재현·A/B 가능).
+**새 스키마 정합:** 결정 레코드(`verified_claims.json` 등)는 status만 담고 claim 텍스트는
+`artifacts/claim_ledger.jsonl`에 있으므로 claim_id로 조인해 본문 매칭을 한다. 또한
+high-risk `verified`와 비-high-risk `cite_write`를 구분한다.
 
-지표:
-  1. citation_resolution_rate — 본문의 인용 토큰(src_xxx) 중 sources 레지스트리에 존재하는 비율
-                                 (dangling citation = 깨진 인용 = 환각 신호)
-  2. orphan_source_rate       — 레지스트리에 있으나 본문에서 한 번도 인용 안 된 소스 비율
-  3. leak_rate                — unresolved/refuted 주장이 본문에 단정형으로 샌 비율
-                                 (verified-only 합성 게이트가 지켜졌는가 = 게이트의 핵심 효과)
-  4. verified_coverage_rate   — verified 주장 중 본문에 실제로 인용/등장한 비율
-                                 (합성이 allowlist를 실제로 소비했는가)
+구조 지표(게이트 강제):
+  - citation_resolution_rate  본문 인용 src_xxx 중 레지스트리 존재 비율 (깨진 인용 = 환각)
+  - missing_entailment_proof_rate  high-risk verified 주장 중 anchored-entails 증명이 빠진 비율 (FR-X2 → 0이어야)
+  - span_match_rate            verified 증명 verdict의 verbatim-span 일치 비율 (100%여야)
+  - coverage_ok               모든 high-risk 주장이 terminal status를 가짐 (FR-X3 백스톱)
+정직성 지표:
+  - leak_rate                 unresolved/refuted 주장이 본문에 단정형으로 샌 비율 (verified-only 게이트)
+  - verified_coverage_rate    high-risk verified 주장이 본문에 실제 등장한 비율
+  - orphan_source_rate        레지스트리에 있으나 미인용 소스 비율
+  - degraded_verdict_rate     failed/malformed로 마감된 verdict 비율 (NFR-1)
+무결성 게이트:
+  - manifest_ok               서명 매니페스트가 있고 CURRENT run이 superseded 아님 (FR-X1/S4)
 
-입력 (세션 폴더):
-  <session>/outputs/**/*.md                 (합성된 보고서 본문)
-  <session>/sources/sources.jsonl           (소스 레지스트리)
-  <session>/outputs/verified_claims.json    (validate_ledger 산출)
-  <session>/outputs/unresolved_claims.json
-  <session>/outputs/refuted_claims.json
-
-출력:
-  <session>/outputs/eval_report.json + stderr 요약
-
-판정(verdict): leak 또는 dangling citation이 1건이라도 있으면 FAIL(exit 1), 아니면 PASS(exit 0).
-  → 측정 도구지만, 명백한 결함(인용 깨짐·미검증 누출)은 회귀로 간주해 비0 종료.
+verdict FAIL(exit 2 — 마감 금지) 조건: leak 또는 dangling 또는
+missing_entailment_proof_rate>0 또는 citation_resolution<100% 또는 coverage 실패
+또는 manifest 미서명/superseded.
 """
 
 import argparse
@@ -35,46 +32,46 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(__file__))
+import commit as cm  # noqa: E402
+
 SRC_TOKEN = re.compile(r"src_[0-9a-zA-Z_]+")
-NGRAM = 6  # leak/coverage 판별용 content char n-gram 길이
+NGRAM = 6
 
 
 def _read_jsonl(path):
     out = []
-    if not os.path.exists(path):
-        return out
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
     return out
 
 
-def _read_json(path):
+def _read_json(path, default=None):
     if not os.path.exists(path):
-        return []
+        return default if default is not None else []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
-        return []
+        return default if default is not None else []
 
 
 def _load_body(out_dir):
-    """outputs/ 아래 모든 .md를 본문으로 합친다."""
     parts = []
     for p in sorted(glob.glob(os.path.join(out_dir, "**", "*.md"), recursive=True)):
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             parts.append(f.read())
     return "\n".join(parts)
 
 
 def _content(s):
-    """공백·구두점 제거한 content 문자열(한글/영숫자/%만 유지) — 조사·띄어쓰기 흔들림 흡수."""
     return re.sub(r"[^0-9A-Za-z가-힣%]", "", s or "")
 
 
@@ -82,122 +79,149 @@ def _ngrams(s, n=NGRAM):
     return {s[i:i + n] for i in range(len(s) - n + 1)} if len(s) >= n else set()
 
 
-def _claim_present(claim_text, claim_id, body_blob, body_raw, exclude_blob=""):
-    """주장이 본문에 등장하는가? claim_id 직접 등장 OR (exclude에 없는) 특징 n-gram이 본문에 등장.
-    exclude_blob(예: verified 주장 본문)에 있는 n-gram은 공유 맥락(버전번호 등)이므로 제외 → 오탐 방지."""
-    if claim_id and claim_id in body_raw:
+def _present(text, cid, body_blob, body_raw, exclude_blob=""):
+    if cid and cid in body_raw:
         return True
-    grams = _ngrams(_content(claim_text)) - _ngrams(exclude_blob)
+    grams = _ngrams(_content(text)) - _ngrams(exclude_blob)
     return any(g in body_blob for g in grams)
 
 
-def evaluate(out_dir, sources_path):
+def evaluate(session, out_dir=None, sources_path=None):
+    out_dir = out_dir or os.path.join(session, "outputs")
+    art = os.path.join(session, "artifacts")
+    sources_path = sources_path or os.path.join(session, "sources", "sources.jsonl")
+
     body = _load_body(out_dir)
     body_blob = _content(body)
-    sources = _read_jsonl(sources_path)
-    source_ids = {s.get("id") for s in sources if s.get("id")}
-    verified = _read_json(os.path.join(out_dir, "verified_claims.json"))
+    source_ids = {s.get("id") for s in _read_jsonl(sources_path) if s.get("id")}
+
+    # claim text lives in the ledger (decision records are status-only now)
+    text_of = {c.get("claim_id"): c.get("text", "") for c in _read_jsonl(os.path.join(art, "claim_ledger.jsonl"))}
+    risk = {r.get("claim_id"): r for r in _read_jsonl(os.path.join(art, "risk_classifications.jsonl"))
+            if r.get("atomized_from") is None}
+    high_risk_ids = {cid for cid, r in risk.items() if r.get("computed_risk") == "high"}
+    verdicts = _read_jsonl(os.path.join(art, "entailment_verdicts.jsonl"))
+    anchored_entails = {(v["claim_id"], v["source_id"])
+                        for v in verdicts if v.get("label") == "entails" and v.get("anchors_ok")}
+
+    verified_all = _read_json(os.path.join(out_dir, "verified_claims.json"))
+    verified = [c for c in verified_all if c.get("high_risk") and c.get("status") == "verified"]
     unresolved = _read_json(os.path.join(out_dir, "unresolved_claims.json"))
     refuted = _read_json(os.path.join(out_dir, "refuted_claims.json"))
 
-    # 1) citation resolution
-    cited = SRC_TOKEN.findall(body)
-    cited_set = set(cited)
-    dangling = sorted(c for c in cited_set if c not in source_ids)
-    resolved = sorted(c for c in cited_set if c in source_ids)
-    cite_rate = (len(resolved) / len(cited_set)) if cited_set else 1.0
-
-    # 2) orphan sources (레지스트리에 있으나 본문 미인용)
-    orphans = sorted(sid for sid in source_ids if sid not in cited_set)
+    # 1) citation resolution + orphans
+    cited = set(SRC_TOKEN.findall(body))
+    dangling = sorted(c for c in cited if c not in source_ids)
+    cite_rate = (len(cited - set(dangling)) / len(cited)) if cited else 1.0
+    orphans = sorted(sid for sid in source_ids if sid not in cited)
     orphan_rate = (len(orphans) / len(source_ids)) if source_ids else 0.0
 
-    # verified 주장 본문 = 공유 맥락(버전번호·고유명사 등). leak 판별 시 이 n-gram은 제외.
-    verified_blob = _content(" ".join(c.get("text", "") for c in verified))
+    # 2) missing entailment proof (FR-X2): every verified claim's proof_source_ids
+    #    must each have an anchored-entails verdict.
+    missing_proof = [c["claim_id"] for c in verified
+                     if not all((c["claim_id"], sid) in anchored_entails
+                                for sid in (c.get("proof_source_ids") or []))]
+    missing_proof_rate = (len(missing_proof) / len(verified)) if verified else 0.0
 
-    # 3) leak: unresolved/refuted 주장이 본문에 단정형으로 샜는가
-    leaks = []
-    for claim in unresolved + refuted:
-        cid = claim.get("claim_id", "")
-        text = claim.get("text", "")
-        if _claim_present(text, cid, body_blob, body, exclude_blob=verified_blob):
-            leaks.append({"claim_id": cid, "text": text, "status": claim.get("status")})
+    # 3) span_match_rate over proof verdicts of verified claims
+    proof_pairs = {(c["claim_id"], sid) for c in verified for sid in (c.get("proof_source_ids") or [])}
+    proof_v = [v for v in verdicts if (v["claim_id"], v["source_id"]) in proof_pairs]
+    span_ok = sum(1 for v in proof_v if v.get("span_matched"))
+    span_match_rate = (span_ok / len(proof_v)) if proof_v else 1.0
+
+    # 4) coverage invariant (FR-X3 backstop): every high-risk claim has a terminal status
+    decided = {c["claim_id"] for c in verified_all + unresolved + refuted}
+    coverage_missing = sorted(high_risk_ids - decided)
+    coverage_ok = not coverage_missing
+
+    # 5) degraded verdict rate
+    degraded = sum(1 for v in verdicts if v.get("span_state") == "failed" or v.get("fail_reason"))
+    degraded_rate = (degraded / len(verdicts)) if verdicts else 0.0
+
+    # 6) leak: unresolved/refuted asserted in body (verified text = shared-context exclude)
+    verified_blob = _content(" ".join(text_of.get(c["claim_id"], "") for c in verified))
+    leaks = [{"claim_id": c.get("claim_id"), "status": c.get("status"),
+              "text": text_of.get(c.get("claim_id"), "")}
+             for c in unresolved + refuted
+             if _present(text_of.get(c.get("claim_id"), ""), c.get("claim_id"), body_blob, body, verified_blob)]
     pool = len(unresolved) + len(refuted)
     leak_rate = (len(leaks) / pool) if pool else 0.0
 
-    # 4) verified coverage (allowlist가 실제로 본문에 쓰였는가) — 직접 매칭(제외 없음)
-    covered = sum(
-        1 for c in verified
-        if _claim_present(c.get("text", ""), c.get("claim_id", ""), body_blob, body)
-    )
+    # 7) verified coverage (allowlist actually consumed)
+    covered = sum(1 for c in verified
+                  if _present(text_of.get(c["claim_id"], ""), c["claim_id"], body_blob, body))
     cov_rate = (covered / len(verified)) if verified else 1.0
 
-    verdict = "PASS" if (not leaks and not dangling) else "FAIL"
-    report = {
-        "verdict": verdict,
+    # 8) manifest integrity (FR-X1/S4): signed + CURRENT not superseded
+    manifest_ok, manifest_note = True, "ok"
+    cur = _read_json(os.path.join(session, "CURRENT"), default={})
+    if not cur:
+        manifest_ok, manifest_note = False, "no CURRENT (run not committed/signed)"
+    else:
+        try:
+            cm.assert_publishable(session, cur["run_id"])
+        except (ValueError, KeyError) as e:
+            manifest_ok, manifest_note = False, str(e)
+
+    fail = bool(leaks or dangling or missing_proof or not coverage_ok
+                or cite_rate < 1.0 or not manifest_ok)
+    return {
+        "verdict": "FAIL" if fail else "PASS",
         "metrics": {
             "citation_resolution_rate": round(cite_rate, 3),
-            "orphan_source_rate": round(orphan_rate, 3),
-            "leak_rate": round(leak_rate, 3),
+            "missing_entailment_proof_rate": round(missing_proof_rate, 3),
+            "span_match_rate": round(span_match_rate, 3),
             "verified_coverage_rate": round(cov_rate, 3),
+            "leak_rate": round(leak_rate, 3),
+            "orphan_source_rate": round(orphan_rate, 3),
+            "degraded_verdict_rate": round(degraded_rate, 3),
         },
+        "coverage_ok": coverage_ok,
+        "manifest_ok": manifest_ok,
+        "manifest_note": manifest_note,
         "counts": {
-            "citations_total": len(cited_set),
-            "citations_dangling": len(dangling),
-            "sources_total": len(source_ids),
-            "orphan_sources": len(orphans),
-            "verified": len(verified),
-            "unresolved": len(unresolved),
-            "refuted": len(refuted),
-            "leaks": len(leaks),
+            "high_risk_verified": len(verified),
+            "cite_write": sum(1 for c in verified_all if c.get("status") == "cite_write"),
+            "unresolved": len(unresolved), "refuted": len(refuted),
+            "citations_total": len(cited), "citations_dangling": len(dangling),
+            "sources_total": len(source_ids), "orphan_sources": len(orphans),
+            "leaks": len(leaks), "missing_proof": len(missing_proof),
+            "coverage_missing": len(coverage_missing),
         },
-        "dangling_citations": dangling,
-        "orphan_sources": orphans,
-        "leaks": leaks,
+        "leaks": leaks, "dangling_citations": dangling,
+        "missing_proof_claims": missing_proof, "coverage_missing": coverage_missing,
     }
-    return report
 
 
-def _print(report):
-    m, c = report["metrics"], report["counts"]
-    out = sys.stderr
-    print("=== eval_report 결과 ===", file=out)
-    print(f"  verdict: {report['verdict']}", file=out)
-    print(
-        f"  citation_resolution={m['citation_resolution_rate']:.0%} "
-        f"(dangling {c['citations_dangling']}/{c['citations_total']})",
-        file=out,
-    )
-    print(
-        f"  leak_rate={m['leak_rate']:.0%} (미검증 누출 {c['leaks']}/{c['unresolved']+c['refuted']})",
-        file=out,
-    )
-    print(
-        f"  orphan_source_rate={m['orphan_source_rate']:.0%} ({c['orphan_sources']}/{c['sources_total']})",
-        file=out,
-    )
-    print(f"  verified_coverage={m['verified_coverage_rate']:.0%}", file=out)
-    if report["leaks"]:
-        print("  [LEAK] 미검증/반박 주장이 본문에 등장:", file=out)
-        for lk in report["leaks"]:
-            print(f"    - {lk['claim_id']} ({lk['status']}): {lk['text'][:50]}", file=out)
-    if report["dangling_citations"]:
-        print(f"  [DANGLING] 레지스트리에 없는 인용: {report['dangling_citations']}", file=out)
+def _print(rep):
+    m, c = rep["metrics"], rep["counts"]
+    o = sys.stderr
+    print("=== eval_report (§9) ===", file=o)
+    print(f"  verdict: {rep['verdict']}  (manifest: {rep['manifest_note']})", file=o)
+    print(f"  citation_resolution={m['citation_resolution_rate']:.0%} (dangling {c['citations_dangling']}/{c['citations_total']})", file=o)
+    print(f"  missing_entailment_proof={m['missing_entailment_proof_rate']:.0%}  span_match={m['span_match_rate']:.0%}  coverage_ok={rep['coverage_ok']}", file=o)
+    print(f"  leak_rate={m['leak_rate']:.0%} ({c['leaks']}/{c['unresolved']+c['refuted']})  verified_coverage={m['verified_coverage_rate']:.0%}", file=o)
+    print(f"  orphan={m['orphan_source_rate']:.0%}  degraded={m['degraded_verdict_rate']:.0%}  (high-risk verified {c['high_risk_verified']}, cite_write {c['cite_write']})", file=o)
+    for lk in rep["leaks"]:
+        print(f"  [LEAK] {lk['claim_id']} ({lk['status']}): {lk['text'][:50]}", file=o)
+    if rep["dangling_citations"]:
+        print(f"  [DANGLING] {rep['dangling_citations']}", file=o)
+    if rep["coverage_missing"]:
+        print(f"  [COVERAGE] high-risk claims with no status: {rep['coverage_missing']}", file=o)
 
 
 def main():
-    p = argparse.ArgumentParser(description="batchim 결정론적 평가 채점기")
-    p.add_argument("--session", required=True, help="리서치 세션 폴더")
-    p.add_argument("--out-dir", help="기본: <session>/outputs")
-    p.add_argument("--sources", help="기본: <session>/sources/sources.jsonl")
+    p = argparse.ArgumentParser(description="받침 Phase-7 평가 채점기 (§9 하드게이트)")
+    p.add_argument("--session", required=True)
+    p.add_argument("--out-dir")
+    p.add_argument("--sources")
     args = p.parse_args()
+    rep = evaluate(args.session, args.out_dir, args.sources)
     out_dir = args.out_dir or os.path.join(args.session, "outputs")
-    sources = args.sources or os.path.join(args.session, "sources", "sources.jsonl")
-
-    report = evaluate(out_dir, sources)
     with open(os.path.join(out_dir, "eval_report.json"), "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-    _print(report)
-    sys.exit(0 if report["verdict"] == "PASS" else 1)
+        json.dump(rep, f, ensure_ascii=False, indent=2)
+    _print(rep)
+    sys.exit(0 if rep["verdict"] == "PASS" else 2)
 
 
 if __name__ == "__main__":
