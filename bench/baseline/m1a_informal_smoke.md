@@ -44,6 +44,23 @@ single residual false-entail is a quote-mine — by design out of M1a scope. It 
 the **M2 launch-gate baseline**: the panel must drive `quote-mining` false-entail
 from 1/1 → 0 on this kind of case without raising `false-negative` on controls.
 
+## M2 panel result (same session, panel enabled)
+Ran `panel.py` (N=3 lenses) over the 3 verified-candidates, then re-ran
+`validate_ledger` with M2 auto-enabled:
+
+| metric | M1a | M1a + M2 panel |
+|---|---|---|
+| false-entail (total) | 1/6 | **0/6** |
+| false-negative (controls) | 0/6 | **0/6** |
+
+The hard quote-mine `c_t1_hard` went `verified → unresolved` (quarantined): all
+three lenses voted `contradicts` (refute lens cited EU AI Act **Art 5(1)(h)**
+exceptions; numeric_consistency flagged the absolute-vs-conditional scope; source_quality
+flagged B/B blogs with no primary legal text). Both controls stayed `verified`
+(3-of-3 `entails`). This is the quote-mining defense the panel exists for, with the
+expected zero regression on controls — though on an informal set, not the signed
+benchmark.
+
 ## Bugs found by this run (fixed)
 - `dedup.py` read `snippet`/`title` (absent in schema) → empty simhash collapsed
   all sources into one cluster. Fixed (use `text`, guard empty tokens).

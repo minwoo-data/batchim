@@ -153,6 +153,10 @@ def validate(session, ledger_path, sources_path, out_dir, sign=False):
     risk_rows, e = _read_jsonl(os.path.join(art, "risk_classifications.jsonl")); hard += e
     verdicts, e = _read_jsonl(os.path.join(art, "entailment_verdicts.jsonl")); hard += e
     partition, _pe = _read_json(os.path.join(art, "independence_partition.json"))
+    # M2: panel consensus (if present, enables the panel gate, FR-P1/§6.7-4b).
+    panel_rows, _pp = _read_jsonl(os.path.join(art, "panel_consensus.jsonl"))
+    panel_by_claim = {r.get("claim_id"): r.get("panel_consensus") for r in panel_rows}
+    m2_enabled = bool(panel_rows)
 
     claim_by_id = {c.get("claim_id"): c for c in claims}
     # risk: parent rows only (atomized_from is None) carry the ledger-claim verdict.
@@ -209,10 +213,13 @@ def validate(session, ledger_path, sources_path, out_dir, sign=False):
             })
 
         try:
-            rec = decide.decide_claim(cid, tuples)
+            rec = decide.decide_claim(cid, tuples, m2_enabled=m2_enabled,
+                                      panel_consensus=panel_by_claim.get(cid))
         except decide.StructuralError as se:
             _report_hard([str(se)]); return 2
         rec["high_risk"] = True
+        if m2_enabled:
+            rec["panel_consensus"] = panel_by_claim.get(cid)
 
         if not by_claim.get(cid):
             coverage_gaps.append(cid)  # high-risk 주장에 verdict 0건 → missing(이미 unresolved)

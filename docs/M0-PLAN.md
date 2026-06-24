@@ -28,9 +28,10 @@ Goal: **measure false-entail rate vs human labels** before any durability machin
 - [ ] Golden fixtures for **every** §6.7 branch (D5); Appendix B normalization fixture corpus.
 
 ## M2 — Panel (completes MVP)
-- [ ] `panel.py` — N=3 prompt-diverse lenses, 2-of-3 consensus, producer-aware aggregation (FR-P1/P3).
-- [ ] **Quote-mining defense:** panel gates `verified` (§6.7-4b).
-- [ ] **Launch gate:** human-precision stratified by failure-mode beats insane-research on false-entail by the pre-registered margin; `verified_recall` gate honored (§9).
+- [x] `panel.py` — N=3 prompt-diverse lenses (refute/source_quality/numeric_consistency), 2-of-3 consensus, quarantine on split/missing/failed (FR-P1). validate_ledger auto-enables M2 from `panel_consensus.jsonl`; verified requires panel consensus `entails` (§6.7-4b). SKILL.md Phase 4.6 wires the lens subagents. ✅
+- [x] **Quote-mining defense — demonstrated:** on the informal 3-topic smoke, the panel drove the hard quote-mine from a false-entail to quarantined → **false-entail 1/6 → 0/6, false-negative 0/6** (controls stayed verified). refute lens cited EU AI Act Art 5(1)(h) exceptions. See `bench/baseline/m1a_informal_smoke.md`.
+- [ ] producer-aware supersession rows in `entailment_verdicts.jsonl` (FR-P3 append-only/supersedes) — M2b/durability; M2 uses a claim-level `panel_consensus.jsonl`.
+- [ ] **Launch gate:** human-precision stratified by failure-mode beats insane-research on false-entail by the pre-registered margin; `verified_recall` gate honored (§9). (needs M0 human labels.)
 
 ## M3 — RAG (post-MVP)
 - [ ] Embeddings + rerank + hybrid + semantic dedup (FR-I1, FR-R3).

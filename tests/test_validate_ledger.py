@@ -25,7 +25,7 @@ def check(name, cond):
         print(f"  FAIL: {name}")
 
 
-def _mk(sources, claims, risk, verdicts, partition=None):
+def _mk(sources, claims, risk, verdicts, partition=None, panel=None):
     d = tempfile.mkdtemp(prefix="batchim_vl_")
     art = os.path.join(d, "artifacts")
     os.makedirs(art, exist_ok=True)
@@ -42,6 +42,9 @@ def _mk(sources, claims, risk, verdicts, partition=None):
     if partition is not None:
         with open(os.path.join(art, "independence_partition.json"), "w", encoding="utf-8") as f:
             json.dump(partition, f)
+    if panel is not None:  # {claim_id: consensus} -> panel_consensus.jsonl (enables M2)
+        wl(os.path.join(art, "panel_consensus.jsonl"),
+           [{"claim_id": k, "panel_consensus": v, "schema_version": 1} for k, v in panel.items()])
     return d
 
 
@@ -142,6 +145,42 @@ def test_compound_fail_closed():
           any(r["claim_id"] == "c1" and r["status_reason"] == "needs_atomization" for r in unresolved))
 
 
+def _verified_candidate(panel):
+    """A claim M1 would verify (2 entails, distinct A/B clusters), plus a panel."""
+    return _mk(
+        [_src("s1", "A"), _src("s2", "B")],
+        [_claim("c1")], [_risk("c1")],
+        [_v("c1", "s1", "entails", "A"), _v("c1", "s2", "entails", "B")],
+        partition={"clusters": {"s1": "cl_a", "s2": "cl_b"}},
+        panel=panel,
+    )
+
+
+def test_m2_panel_entails_keeps_verified():
+    d = _verified_candidate({"c1": "entails"})
+    rc = vl.validate(d, os.path.join(d, "artifacts", "claim_ledger.jsonl"),
+                     os.path.join(d, "sources", "sources.jsonl"), os.path.join(d, "outputs"))
+    out = _outputs(d)
+    check("M2 panel entails -> still verified", rc == 0 and any(r["claim_id"] == "c1" and r["status"] == "verified" for r in out))
+
+
+def test_m2_panel_quarantines_quotemine():
+    # the hard quote-mine: M1 would verify, but panel refute-lens -> contradicts consensus
+    d = _verified_candidate({"c1": "contradicts"})
+    rc = vl.validate(d, os.path.join(d, "artifacts", "claim_ledger.jsonl"),
+                     os.path.join(d, "sources", "sources.jsonl"), os.path.join(d, "outputs"))
+    un = json.load(open(os.path.join(d, "outputs", "unresolved_claims.json"), encoding="utf-8"))
+    check("M2 panel contradicts -> quarantined (not verified)",
+          rc == 1 and any(r["claim_id"] == "c1" and r["status_reason"] == "panel_no_consensus" for r in un))
+
+
+def test_m2_no_consensus_quarantines():
+    d = _verified_candidate({"c1": "no_consensus"})
+    rc = vl.validate(d, os.path.join(d, "artifacts", "claim_ledger.jsonl"),
+                     os.path.join(d, "sources", "sources.jsonl"), os.path.join(d, "outputs"))
+    check("M2 1-1-1 no_consensus -> not verified", rc == 1)
+
+
 def test_binding_snapshot_hash_mismatch_exit2():
     d = _mk([_src("s1", "A", snap="sha256:REGISTRY")], [_claim("c1")], [_risk("c1")],
             [_v("c1", "s1", "entails", "A", snap="sha256:WRONG")])
@@ -216,6 +255,9 @@ if __name__ == "__main__":
     test_binding_snapshot_hash_mismatch_exit2()
     test_binding_grade_copy_disagree_exit2()
     test_missing_verdict_unresolved_missing()
+    test_m2_panel_entails_keeps_verified()
+    test_m2_panel_quarantines_quotemine()
+    test_m2_no_consensus_quarantines()
     test_full_chain_snapshot_classify_gate_validate()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

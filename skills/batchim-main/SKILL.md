@@ -263,6 +263,22 @@ python3 "$SP/entail_gate.py"    --session "$S"
 
 > 검증자는 **판정(label)만** 낸다. verbatim 일치·숫자/날짜 일치는 `entail_gate.py`가 **코드로** 강제하고, 최종 status는 `validate_ledger.py`가 §6.7로 계산한다 — LLM이 verified를 쓸 수 없다.
 
+### Phase 4.6: N=3 패널 (M2, MVP 포함 — quote-mining 방어)
+
+앵커는 fabrication·number-swap을 막지만 **quote-mining**(진짜·verbatim·숫자 일치하는 인용이 더 넓은 주장을 함의하지 않음 — EU AI법 "예외 있음" 케이스)은 못 막는다. M1 검증자가 **verified 후보**가 될 high-risk 주장마다, **3개 prompt-diverse 렌즈** 서브에이전트를 띄운다 (검증자와 달리 스냅샷에 격리하지 않고 **세계지식으로 적대적 검토** 허용 — 이게 quote-mining을 잡는 핵심):
+
+- **refute** — 누락된 한정어/예외/scope 과잉으로 주장이 false·misleading한지 적대적으로 찾는다.
+- **source_quality** — 인용 소스가 충분히 1차적·독립적·적합한지.
+- **numeric_consistency** — 주장의 scope·수량·조건이 근거와 정확히 일치(확대·조건누락 없이)하는지.
+
+각 렌즈는 structured output `{ "claim_id","lens","vote":"entails|neutral|contradicts","vote_state":"done|failed","rationale":"…","model_id":"…","panel_prompt_hash":"sha256:…" }` 를 `artifacts/raw_panel_votes.jsonl`에 append. 그다음:
+
+```bash
+python3 "$SP/panel.py" --session "$S"   # 2-of-3 합의 → panel_consensus.jsonl
+```
+
+`panel.py`가 **2-of-3 합의**를 코드로 집계(1-1-1 split·렌즈 누락/실패 → `no_consensus` → quarantine). `validate_ledger.py`는 `panel_consensus.jsonl`이 있으면 자동으로 M2를 켜고, **verified는 panel 합의가 `entails`일 때만** 부여한다(§6.7-4b). 합의가 `contradicts`/`no_consensus`면 주장은 `unresolved`로 격리된다 — quote-mining이 본문 단정으로 새지 않는다.
+
 ### Phase 5: Knowledge Synthesis
 - Structure content logically
 - Write comprehensive sections
