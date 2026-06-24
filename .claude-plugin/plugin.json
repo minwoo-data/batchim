@@ -1,6 +1,6 @@
 {
   "name": "batchim",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "받침 (Batchim) — verification-gated deep research: isolated-verifier + N=3 panel entailment with code-enforced span/number anchors and an auditable, signed ledger.",
   "author": {
     "name": "Minwoo Park",
