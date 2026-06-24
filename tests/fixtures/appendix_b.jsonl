@@ -1,0 +1,22 @@
+{"name": "nfkc_fullwidth", "snapshot": "The spec says \uff34\uff2c\uff33 1.3 is required.", "span": "TLS 1.3 is required", "expect_match": true}
+{"name": "nfkc_ligature", "snapshot": "the \ufb01nal report", "span": "the final report", "expect_match": true}
+{"name": "html_entity_amp", "snapshot": "AT&amp;T was fined heavily.", "span": "AT&T was fined", "expect_match": true}
+{"name": "html_entity_quote", "snapshot": "the &quot;Act&quot; prohibits it", "span": "the \"Act\" prohibits it", "expect_match": true}
+{"name": "smart_double_quote", "snapshot": "the \u201cAct\u201d prohibits it", "span": "the \"Act\" prohibits it", "expect_match": true}
+{"name": "smart_single_quote", "snapshot": "it\u2019s prohibited", "span": "it's prohibited", "expect_match": true}
+{"name": "endash", "snapshot": "real\u2013time biometric ID", "span": "real-time biometric ID", "expect_match": true}
+{"name": "emdash", "snapshot": "real\u2014time biometric ID", "span": "real-time biometric ID", "expect_match": true}
+{"name": "nb_hyphen", "snapshot": "real\u2011time biometric ID", "span": "real-time biometric ID", "expect_match": true}
+{"name": "minus_sign", "snapshot": "a \u22125% change", "span": "a -5% change", "expect_match": true}
+{"name": "ellipsis", "snapshot": "and so on\u2026 the end", "span": "and so on... the end", "expect_match": true}
+{"name": "nbsp", "snapshot": "grew\u00a0to $4.2bn", "span": "grew to $4.2bn", "expect_match": true}
+{"name": "multi_space", "snapshot": "grew   to    $4.2bn", "span": "grew to $4.2bn", "expect_match": true}
+{"name": "newline_tab", "snapshot": "grew to\n\t$4.2bn in 2026", "span": "grew to $4.2bn in 2026", "expect_match": true}
+{"name": "thin_space", "snapshot": "grew\u2009to $4.2bn", "span": "grew to $4.2bn", "expect_match": true}
+{"name": "case_sensitive", "snapshot": "The Act Prohibits It", "span": "the act prohibits it", "expect_match": false}
+{"name": "paraphrase", "snapshot": "prohibits real-time biometric identification", "span": "bans realtime biometric ID systems", "expect_match": false}
+{"name": "non_contiguous", "snapshot": "the Act clearly prohibits the use", "span": "the Act prohibits use", "expect_match": false}
+{"name": "fabrication", "snapshot": "HTTP/3 runs over QUIC.", "span": "HTTP/3 allows a TLS 1.2 fallback", "expect_match": false}
+{"name": "empty_span", "snapshot": "anything here", "span": "", "expect_match": false}
+{"name": "duplicate_occurrence", "snapshot": "ban now. ban now. done", "span": "ban now", "expect_match": true, "occurrence": 0}
+{"name": "combined", "snapshot": "the \u201cAct\u201d\u00a0fined AT&amp;T", "span": "the \"Act\" fined AT&T", "expect_match": true}
