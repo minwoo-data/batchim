@@ -15,7 +15,7 @@ Source of truth: [`PRD.md`](PRD.md) v0.4. MVP = **M0 + M1 + M2** (panel is in th
 ## M1a — Vertical slice (FIRST, measures the core experiment)
 Goal: **measure false-entail rate vs human labels** before any durability machinery.
 - [ ] `classify_risk.py` — deterministic risk + compound-claim atomization (regex/gazetteer/POS, NO LLM/network); target `risk_recall ≥ 0.98` on a fixture. (§6.1)
-- [ ] `snapshot.py` — freeze source text + content hash. (§6.5)
+- [x] `snapshot.py` — freeze source text + content hash. (§6.5) ✅ f9d1a61
 - [ ] `entail_gate.py` — isolated verifier per `(atomic_claim, span+context, source)`; anchors: verbatim span-match (Appendix B) + numeric/date. (§6.3, App B)
 - [ ] minimal `validate_ledger.py` decide-stage producing `verified_claims.json` via §6.7 (no signing yet).
 - [ ] **Experiment:** run M1a on the M0 benchmark, compute false-entail rate stratified by failure-mode. **Gate:** is M1a meaningfully better than baseline on fabrication/number? (quote-mining expected flat until M2.)
