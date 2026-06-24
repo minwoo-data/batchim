@@ -317,7 +317,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/batchim-main/scripts/validate_ledger.py" -
 마감 점검:
 - 보고서에 `Verified` / `Refuted` / `Unresolved` 3개 섹션을 노출한다.
 - `unresolved`/`refuted` 주장이 본문에 단정형으로 섞이지 않았는지 최종 점검(verified-only 합성 게이트 위반 여부).
-- 서명(signed manifest)·`CURRENT` 커밋은 **M1b**에서 추가된다(M1a는 결정 산출까지).
+- **서명·커밋(M1b 적용됨):** `validate_ledger`가 매 패스에 `outputs/manifest.json`(input-closure 서명, content-addressed `run_id`)을 쓰고, `runs/<run_id>/`로 원자적 커밋 + `CURRENT` 포인터를 flip한다(FR-S1/S3). 합성·발행 전 신뢰 기준은 **`CURRENT`가 가리키는, byte-for-byte 검증되는 run** 이다.
 
 #### Strict 모드 (옵트인 하이브리드 검증)
 

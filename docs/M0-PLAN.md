@@ -22,7 +22,7 @@ Goal: **measure false-entail rate vs human labels** before any durability machin
 
 ## M1b — Durability
 - [~] Artifact ownership + schemas (Appendix A), referential/binding integrity (FR-A1–A5). **FR-A5 binding done** (validate_ledger: snapshot_hash/claim_text_hash/grade-copy → exit 2).
-- [~] Input-closure manifest + single-rename commit + cross-version replay (FR-S1–S4). **FR-S1 signed manifest done** (`manifest.py`: content-addressed run_id, sha256 over input-closure + code versions + enabled_producers; `verify()` detects tamper/skip). ☐ FR-S2 replay, ☐ FR-S3 single-rename `CURRENT` commit, ☐ FR-S4 superseded_by gate.
+- [~] Input-closure manifest + single-rename commit + cross-version replay (FR-S1–S4). **FR-S1 signed manifest done** (`manifest.py`: content-addressed run_id, sha256 over input-closure + code versions + enabled_producers; `verify()` detects tamper/skip). **FR-S3 single-rename commit done** (`commit.py`: stage → atomic rename `runs/<run_id>/` → flip `CURRENT`; `read_current()` trusts only a byte-for-byte-verified run, discards leftover `.staging`; idempotent via content-addressed run_id). ☐ FR-S2 replay (reuse frozen verdicts; re-query on explained mismatch, exit 2 on unexplained), ☐ FR-S4 superseded_by publish gate.
 - [~] Exit taxonomy + coverage invariant + body re-classification backstop (FR-X1–X3, FR-R1). **FR-X1/X3 done** (exit 0/1/2 + coverage invariant in validate_ledger). ☐ FR-R1 Phase-6 body backstop.
 - [x] `dedup.py` → frozen `independence_partition.json` (FR-I0). ☐ Throttle/budget (FR-P2, NFR-1).
 - [~] Golden fixtures for **every** §6.7 branch (D5) — `test_gate_core` covers all branches. ☐ Appendix B normalization fixture corpus.

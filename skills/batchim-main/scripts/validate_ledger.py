@@ -33,6 +33,7 @@ import sys
 
 import decide
 import manifest as mf
+import commit as cm
 
 VALIDATE_VERSION = "0.1.0-m1b"
 VALID_GRADES = {"A", "B", "C", "D", "E"}
@@ -245,6 +246,8 @@ def validate(session, ledger_path, sources_path, out_dir, sign=False):
     code_versions = mf.collect_code_versions(VALIDATE_VERSION)
     man = mf.build_manifest(session, enabled_producers, code_versions)
     mf.write_manifest(session, man)
+    # FR-S3: stage → atomic rename runs/<run_id>/ → flip CURRENT (sole commit point).
+    cm.commit_run(session, man)
 
     n_verified_high = sum(1 for r in verified if r.get("high_risk"))
     _report(verified, unresolved, refuted, coverage_gaps)
