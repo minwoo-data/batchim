@@ -72,6 +72,32 @@ def test_numeric_identifiers():
           not anchors.numeric_ok("QUIC requires TLS version 1.2 or greater.", "older than 1.3"))
 
 
+def test_numeric_scale_and_referent():
+    # SCALE: same digits, different magnitude -> mismatch (literal anchor missed this)
+    check("scale: $4.2bn != $4.2 million", not anchors.numeric_ok("revenue was $4.2 billion", "fell to $4.2 million"))
+    check("scale: 4.2 billion ~ $4.2bn (currency-agnostic)", anchors.numeric_ok("revenue was 4.2 billion", "grew to $4.2bn"))
+    check("scale: $115.2 billion ~ 115.2 billion", anchors.numeric_ok("rose to $115.2 billion", "a record 115.2 billion"))
+    # PERCENT vs absolute: 8% != bare 8
+    check("percent: 8% != bare 8", not anchors.numeric_ok("inflation rose 8%", "there were 8 members"))
+    check("percent: 142% ~ 142%", anchors.numeric_ok("rose 142%", "up 142% year over year"))
+    # _quantities normalization
+    check("_quantities: $4.2bn -> mag 4.2e9", anchors._quantities("grew to $4.2bn") == {"mag:4200000000"})
+    check("_quantities: 8% -> pct:8", anchors._quantities("rose 8%") == {"pct:8"})
+    check("_quantities: 2026 -> year", anchors._quantities("in 2026") == {"year:2026"})
+
+    # REFERENT flags (advisory — segment vs total, fiscal vs calendar)
+    f = anchors.referent_flags("NVIDIA Data Center revenue was $130.5 billion",
+                               "Total record full-year revenue was $130.5 billion")
+    check("referent: data center vs total flagged", any(x["group"] == "scope" for x in f))
+    f2 = anchors.referent_flags("fiscal 2025 revenue", "in calendar 2025")
+    check("referent: fiscal vs calendar flagged", any(x["group"] == "fiscal_calendar" for x in f2))
+    check("referent: no conflict -> empty", anchors.referent_flags("revenue rose", "revenue increased") == [])
+    # referent flag is advisory: it does NOT fail anchors_ok on a literal match
+    SNAP_R = "Total record full-year revenue was $130.5 billion."
+    ok, d = anchors.anchors_ok("Total revenue was $130.5 billion", "Total record full-year revenue was $130.5 billion", SNAP_R)
+    check("anchors_ok: referent_flags present in detail", "referent_flags" in d)
+
+
 def T(verdict, anchors_ok=True, cluster="cl", grade="A", sid="s"):
     return {"normalized_verdict": verdict, "anchors_ok": anchors_ok,
             "cluster_id": cluster, "quality_rating": grade, "source_id": sid}
@@ -152,6 +178,7 @@ def test_decide():
 if __name__ == "__main__":
     test_anchors()
     test_numeric_identifiers()
+    test_numeric_scale_and_referent()
     test_decide()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

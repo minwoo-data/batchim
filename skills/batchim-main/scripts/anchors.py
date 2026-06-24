@@ -68,6 +68,22 @@ _UNIT_AFTER = re.compile(
     r"usd|eur|gbp|krw|won|dollars?|euros?|pounds?|kg|km|mph|[gm]hz|[mgt]b|"
     r"degrees?|years?|months?|days?|hours?|people|cases?|deaths?|pts?|bps)\b)", re.I)
 _CUR_BEFORE = re.compile(r"[$€£¥₩]\s*$")
+# scale words (so $4.2bn ≠ $4.2 million) and percent (so 8% ≠ 8)
+_MAGNITUDE = {"bn": 1e9, "b": 1e9, "billion": 1e9, "m": 1e6, "mm": 1e6, "million": 1e6,
+              "k": 1e3, "thousand": 1e3, "tn": 1e12, "t": 1e12, "trillion": 1e12}
+_MAG_AFTER = re.compile(r"^\s*(bn|billion|mm|million|thousand|trillion|[bmkt])\b", re.I)
+_PCT_AFTER = re.compile(r"^\s*(?:%|(?:percent|pct|퍼센트)\b)", re.I)
+# mutually-exclusive referents: a number that matches literally may still describe a
+# DIFFERENT quantity (segment vs total, fiscal vs calendar, RRR vs ARR). Advisory →
+# routed to the panel's numeric lens (PRD §6.3 note), not a hard anchor fail.
+_REFERENT_GROUPS = [
+    ("scope", ["total", "overall", "company-wide", "companywide", "consolidated", "group-wide"],
+              ["segment", "division", "data center", "data-center", "business unit", "product line"]),
+    ("fiscal_calendar", ["fiscal"], ["calendar"]),
+    ("period", ["annual", "full-year", "full year", "yearly"], ["quarterly", "quarter"]),
+    ("risk", ["relative risk", "relative reduction"], ["absolute risk", "absolute reduction"]),
+    ("margin", ["gross"], ["net"]),
+]
 
 
 def _salient_nums(text: str):
@@ -99,29 +115,86 @@ def _salient_nums(text: str):
 
 
 def _nums(s: str):
-    """All numbers in `s` (span side of the subset test) — identifiers included,
-    so a claim quantity can be found wherever it occurs."""
+    """All bare numbers in `s` (legacy helper)."""
     return {n.replace(",", "") for n in _NUM.findall(s or "")}
 
 
+def _canon_value(v):
+    return str(int(v)) if v == int(v) else repr(round(v, 6)).rstrip("0").rstrip(".")
+
+
+def _quantities(text: str):
+    """Salient quantities normalized by SCALE and unit-class, so a scale/percent
+    mismatch is caught even when the bare digits coincide ($4.2bn vs $4.2 million,
+    8% vs 8). Returns tokens `cls:value` with cls ∈ {pct, year, mag}; currency and
+    plain numbers fold to `mag` (the digits are the digits), so $4.2bn matches
+    "4.2 billion" but NOT "$4.2 million". Identifier/ordinal numbers are dropped
+    (same policy as `_salient_nums`)."""
+    out = set()
+    for m in _NUM.finditer(text or ""):
+        tok = m.group().replace(",", "")
+        start, end = m.span()
+        before, after = text[:start], text[end:]
+        is_decimal = "." in tok
+        is_year = bool(_YEAR_RE.fullmatch(tok))
+        pct = bool(_PCT_AFTER.match(after))
+        mag_m = _MAG_AFTER.match(after)
+        has_unit = (pct or bool(mag_m) or bool(_UNIT_AFTER.match(after))
+                    or bool(_CUR_BEFORE.search(before)))
+        attached = start > 0 and (text[start - 1] in "/-#" or text[start - 1].isalpha())
+        ident_ctx = attached or bool(_IDENT_BEFORE.search(before))
+        multidigit = len(tok.replace(".", "")) >= 2
+        if not (is_decimal or is_year or has_unit or (not ident_ctx and multidigit)):
+            continue
+        val = float(tok)
+        if pct:
+            out.add(f"pct:{_canon_value(val)}")
+        elif is_year and not mag_m:
+            out.add(f"year:{_canon_value(val)}")
+        else:
+            if mag_m:
+                val *= _MAGNITUDE[mag_m.group(1).lower()]
+            out.add(f"mag:{_canon_value(val)}")
+    return out
+
+
+def referent_flags(claim: str, span: str):
+    """Detect mutually-exclusive referents present on opposite sides (claim says
+    'data center', span says 'total'; claim 'fiscal', span 'calendar'). ADVISORY —
+    surfaced for the panel's numeric lens, does NOT change anchors_ok."""
+    cl, sp = (claim or "").lower(), (span or "").lower()
+    flags, seen = [], set()
+    for name, side_a, side_b in _REFERENT_GROUPS:
+        for x in side_a:
+            for y in side_b:
+                for c_term, s_term in ((x, y), (y, x)):
+                    if c_term in cl and s_term in sp and (name, c_term, s_term) not in seen:
+                        seen.add((name, c_term, s_term))
+                        flags.append({"group": name, "claim_term": c_term, "span_term": s_term})
+    return flags
+
+
 def numeric_ok(claim: str, span: str) -> bool:
-    """Conservative literal numeric/date consistency: every QUANTITY asserted in
-    the CLAIM must also appear (normalized) in the SPAN. Catches number/year SWAPS
-    (the anchor's job) while ignoring identifier/ordinal numbers ("version 1") so
-    they don't cause false anchor failures (verified_recall loss). Does NOT attempt
-    semantic reasoning (ranges, 'up to', RRR vs ARR, unit/fiscal-year conversion)
-    — those route to the verifier/panel (PRD §6.3). No claim quantity ⇒ True."""
-    claim_nums = _salient_nums(claim)
-    if not claim_nums:
+    """Scale/unit-aware numeric consistency: every QUANTITY asserted in the CLAIM
+    must appear in the SPAN at the **same scale and unit class** (so $4.2bn does
+    not satisfy $4.2 million, and 8% does not satisfy a bare 8). Catches number/
+    scale/percent SWAPS while ignoring identifier/ordinal numbers ("version 1").
+    Referent mismatch (segment vs total etc.) is advisory (`referent_flags`) and
+    routed to the panel, not failed here. No claim quantity ⇒ True."""
+    claim_q = _quantities(claim)
+    if not claim_q:
         return True
-    return claim_nums.issubset(_nums(span))
+    return claim_q.issubset(_quantities(span))
 
 
 def anchors_ok(claim: str, span: str, snapshot: str):
-    """Return (anchors_ok, detail dict) — span verbatim-present AND numbers consistent."""
+    """Return (anchors_ok, detail dict) — span verbatim-present AND numbers (scale/
+    unit) consistent. `referent_flags` is advisory metadata (→ panel), not part of
+    the boolean."""
     matched, start, end, occ = span_match(span, snapshot)
     nok = numeric_ok(claim, span)
     return (matched and nok), {
         "span_matched": matched, "numeric_ok": nok,
         "span_char_start": start, "span_char_end": end, "occurrence_index": occ,
+        "referent_flags": referent_flags(claim, span),
     }

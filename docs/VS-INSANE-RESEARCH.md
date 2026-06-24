@@ -51,10 +51,13 @@ exists and computes the verdict**, the **panel** catches what code can't
    rate vs human labels, so you know how much the anchors + panel are compensating for.
 
 ### Tier 2 — strengthen the code half (the real differentiator)
-4. **Semantic numeric anchor.** Today it's literal co-occurrence. Add a *referent*
-   check for the segment-vs-total / fiscal-vs-calendar / RRR-vs-ARR family (the NVIDIA
-   "$130.5B total cited as Data Center" case is a real quote-mine the literal anchor
-   misses) — still code, with explicit unit/scale rules, ambiguity routed to the panel.
+4. ~~**Semantic numeric anchor.**~~ **DONE** (`anchors._quantities`): numbers now
+   normalize by **scale + unit class**, so $4.2bn no longer satisfies $4.2 million and
+   8% no longer satisfies a bare 8 (a real gap the literal anchor missed). Plus
+   advisory **`referent_flags`** (segment vs total, fiscal vs calendar, RRR vs ARR)
+   surfaced on each verdict for the panel's numeric lens. *Still open:* full referent
+   *resolution* (deciding the number truly belongs to "total" not "Data Center")
+   stays an LLM/panel job — the anchor only flags the conflict.
 5. **Negation / scope anchor.** A code check for polarity mismatch ("X is NOT prohibited"
    vs claim "X is prohibited") instead of trusting the verifier label alone.
 6. **Contrary-retrieval lens** (PRD Q6). A panel lens that *independently searches* for
