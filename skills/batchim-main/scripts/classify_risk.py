@@ -40,9 +40,10 @@ RULES = {
                  r"jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|"
                  r"aug(ust)?|sep(tember)?|oct(ober)?|nov(ember)?|dec(ember)?)\b"),
     # causal / legal / financial predicate verbs (multilingual; expand over time)
-    "claim_verb": (r"\b(banned?|prohibit(ed|s)?|require[ds]?|caused?|led to|"
-                   r"results? in|increased?|decreased?|reduced?|ruled?|"
-                   r"legaliz(ed|es)?|mandate[ds]?|acquired?|merged?|fined?|"
+    "claim_verb": (r"\b(ban(s|ned)?|bar(s|red)?|prohibit(ed|s)?|restrict(s|ed|ing)?|"
+                   r"block(s|ed)?|require[ds]?|caused?|led to|results? in|"
+                   r"increased?|decreased?|reduced?|ruled?|overturn(ed|s)?|uph(eld|olds?)|"
+                   r"struck|legaliz(ed|es)?|mandate[ds]?|acquired?|merged?|fined?|"
                    r"approved?|rejected?|found|sued?|convicted?)\b|"
                    r"(금지|허용|의무화|인수|합병|판결|벌금|승인|기각)(했|한|함|됐|된)"),
 }

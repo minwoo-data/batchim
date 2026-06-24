@@ -26,6 +26,8 @@ def check(name, cond):
 # --- recall fixture: every high-risk claim MUST be caught (false-low = leak) ---
 HIGH = [
     "The EU AI Act banned real-time biometric identification.",
+    "The EU AI Act bans all real-time remote biometric identification.",
+    "The court barred the merger and restricted future deals.",
     "Revenue grew to $4.2bn in 2026.",
     "Inflation rose 8 percent.",
     "The court ruled against the merger.",
