@@ -14,7 +14,7 @@ Source of truth: [`PRD.md`](PRD.md) v0.4. MVP = **M0 + M1 + M2** (panel is in th
 
 ## M1a — Vertical slice (FIRST, measures the core experiment)
 Goal: **measure false-entail rate vs human labels** before any durability machinery.
-- [ ] `classify_risk.py` — deterministic risk + compound-claim atomization (regex/gazetteer/POS, NO LLM/network); target `risk_recall ≥ 0.98` on a fixture. (§6.1)
+- [x] `classify_risk.py` — deterministic risk + compound-claim atomization (regex/gazetteer/POS, NO LLM/network); risk_recall ≥ 0.98 on fixture; gazetteer_hash pinned. (§6.1) ✅ 9e9feb6
 - [x] `snapshot.py` — freeze source text + content hash. (§6.5) ✅ f9d1a61
 - [x] `entail_gate.py` — code half done: join raw verifier verdicts → anchors (span-match + numeric) → bound `entailment_verdicts.jsonl`. (§6.3, App B) ✅ e9ca82a · *pending: SKILL.md wires the isolated-verifier subagent spawn → `raw_verdicts.jsonl` (data-flow lock).*
 - [ ] minimal `validate_ledger.py` decide-stage producing `verified_claims.json` via §6.7 (no signing yet).
