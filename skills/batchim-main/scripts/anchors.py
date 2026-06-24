@@ -54,26 +54,67 @@ def span_match(span: str, snapshot: str):
 
 
 # --- numeric / date / unit consistency (anchor #2) --------------------------
-_NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
-_YEAR = re.compile(r"\b(1[89]\d{2}|20\d{2})\b")
+_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_YEAR_RE = re.compile(r"(?:1[89]\d{2}|20\d{2})")
+# A number is an IDENTIFIER (not a required quantity) when an identifier word
+# precedes it ("version 1", "Article 5", "RFC 9114", "Section 12") ...
+_IDENT_BEFORE = re.compile(
+    r"(?:version|ver|article|art|section|sec|chapter|ch|clause|paragraph|para|"
+    r"rule|figure|fig|table|item|no|number|rfc|iso|ieee|part|step|phase|tier|"
+    r"level|grade|type|class|page|vol|volume|edition|appendix|annex)\.?\s*$", re.I)
+# ... or a unit/currency marks it as a QUANTITY to keep.
+_UNIT_AFTER = re.compile(
+    r"^\s*(?:[%°]|(?:percent|bn|billion|million|trillion|thousand|[mkbt]|"
+    r"usd|eur|gbp|krw|won|dollars?|euros?|pounds?|kg|km|mph|[gm]hz|[mgt]b|"
+    r"degrees?|years?|months?|days?|hours?|people|cases?|deaths?|pts?|bps)\b)", re.I)
+_CUR_BEFORE = re.compile(r"[$€£¥₩]\s*$")
+
+
+def _salient_nums(text: str):
+    """Quantities in `text` that a proof span must contain — dropping identifier/
+    ordinal numbers ("QUIC version 1", "HTTP/3", "Section 12") that are not the
+    claim's measured value. Kept: decimals, years, unit/%/currency-adjacent, and
+    multi-digit integers outside identifier context. Dropped: bare single-digit
+    integers and identifier-context numbers. (Quantity signals win over context,
+    so "TLS version 1.3" keeps 1.3.)"""
+    out = set()
+    for m in _NUM.finditer(text or ""):
+        tok = m.group().replace(",", "")
+        start, end = m.span()
+        before, after = text[:start], text[end:]
+        is_decimal = "." in tok
+        is_year = bool(_YEAR_RE.fullmatch(tok))
+        has_unit = bool(_UNIT_AFTER.match(after)) or bool(_CUR_BEFORE.search(before))
+        attached = start > 0 and (text[start - 1] in "/-#" or text[start - 1].isalpha())
+        ident_ctx = attached or bool(_IDENT_BEFORE.search(before))
+        multidigit = len(tok.replace(".", "")) >= 2
+        if is_decimal or is_year or has_unit:
+            out.add(tok)            # quantity signal wins (even in identifier context)
+        elif ident_ctx:
+            continue                # identifier / ordinal → not a required quantity
+        elif multidigit:
+            out.add(tok)            # multi-digit non-identifier integer → quantity
+        # else: bare single-digit, no unit → identifier/ordinal → drop
+    return out
 
 
 def _nums(s: str):
+    """All numbers in `s` (span side of the subset test) — identifiers included,
+    so a claim quantity can be found wherever it occurs."""
     return {n.replace(",", "") for n in _NUM.findall(s or "")}
 
 
 def numeric_ok(claim: str, span: str) -> bool:
-    """Conservative literal numeric/date consistency: every number/year asserted
-    in the CLAIM must also appear (normalized) in the SPAN. This catches number/
-    year SWAPS (the anchor's job). It deliberately does NOT attempt semantic
-    numeric reasoning (ranges, 'up to', RRR vs ARR, unit/fiscal-year conversion)
-    — those route to the verifier/panel (PRD §6.3 note). If the claim has no
-    number/year, the anchor is trivially satisfied (True)."""
-    claim_nums = _nums(claim) | set(_YEAR.findall(claim or ""))
+    """Conservative literal numeric/date consistency: every QUANTITY asserted in
+    the CLAIM must also appear (normalized) in the SPAN. Catches number/year SWAPS
+    (the anchor's job) while ignoring identifier/ordinal numbers ("version 1") so
+    they don't cause false anchor failures (verified_recall loss). Does NOT attempt
+    semantic reasoning (ranges, 'up to', RRR vs ARR, unit/fiscal-year conversion)
+    — those route to the verifier/panel (PRD §6.3). No claim quantity ⇒ True."""
+    claim_nums = _salient_nums(claim)
     if not claim_nums:
         return True
-    span_nums = _nums(span) | set(_YEAR.findall(span or ""))
-    return claim_nums.issubset(span_nums)
+    return claim_nums.issubset(_nums(span))
 
 
 def anchors_ok(claim: str, span: str, snapshot: str):

@@ -47,6 +47,31 @@ def test_anchors():
     check("anchors_ok: matched + numeric", ok and d["span_matched"] and d["numeric_ok"])
 
 
+def test_numeric_identifiers():
+    # identifier/ordinal integers are NOT required quantities (verified_recall fix)
+    check("salient: 'version 1' identifier dropped", anchors._salient_nums("QUIC version 1 uses TLS") == set())
+    check("salient: decimal kept", "1.3" in anchors._salient_nums("uses TLS version 1.3 or greater"))
+    check("salient: 'version 1' dropped but 1.3 kept",
+          anchors._salient_nums("QUIC version 1 uses TLS version 1.3") == {"1.3"})
+    check("salient: HTTP/3 identifier dropped", anchors._salient_nums("HTTP/3 runs over QUIC") == set())
+    check("salient: 'Section 12' dropped", anchors._salient_nums("see Section 12 of the Act") == set())
+    check("salient: 'RFC 9114' dropped", anchors._salient_nums("per RFC 9114") == set())
+    check("salient: year kept", anchors._salient_nums("filed in 2026") == {"2026"})
+    check("salient: percent kept", anchors._salient_nums("rose 8%") == {"8"})
+    check("salient: currency kept", anchors._salient_nums("fined $500 million") == {"500"})
+    check("salient: multi-digit count kept", anchors._salient_nums("analyzed 3000000 records") == {"3000000"})
+    check("salient: bare single digit dropped", anchors._salient_nums("the 3 studies agree") == set())
+
+    # the e2e regression: claim with stray 'version 1' identifier now anchors to a
+    # span lacking a standalone '1' (the t6 false-negative we just fixed)
+    claim = "QUIC version 1 uses TLS version 1.3 or greater as its handshake protocol."
+    span = "An endpoint MUST terminate the connection if a version of TLS older than 1.3 is negotiated."
+    check("numeric_ok: identifier no longer breaks anchor (t6 fix)", anchors.numeric_ok(claim, span))
+    # number-swap still caught: claim 1.2 not in a 1.3 span
+    check("numeric_ok: 1.2 vs 1.3 swap still caught",
+          not anchors.numeric_ok("QUIC requires TLS version 1.2 or greater.", "older than 1.3"))
+
+
 def T(verdict, anchors_ok=True, cluster="cl", grade="A", sid="s"):
     return {"normalized_verdict": verdict, "anchors_ok": anchors_ok,
             "cluster_id": cluster, "quality_rating": grade, "source_id": sid}
@@ -126,6 +151,7 @@ def test_decide():
 
 if __name__ == "__main__":
     test_anchors()
+    test_numeric_identifiers()
     test_decide()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
