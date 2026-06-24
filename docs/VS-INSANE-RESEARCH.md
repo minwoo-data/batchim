@@ -64,9 +64,14 @@ exists and computes the verdict**, the **panel** catches what code can't
    stem, so "did not block the merger" doesn't false-flip "approved the merger".
    English-strong; Korean negation (post-verbal) is best-effort. *Open:* broader
    scope/quantifier handling ("only", "all but", "up to") still routes to the panel.
-6. **Contrary-retrieval lens** (PRD Q6). A panel lens that *independently searches* for
-   refuting evidence rather than only reasoning over the cited sources — the strongest
-   defense against omission/quote-mining (actively go find the exception).
+6. ~~**Contrary-retrieval lens**~~ **DONE (helper + wiring)** (`contrary.py`): the
+   panel's refute lens, when a search backend is present, generates refutation queries
+   (`generate_refutation_queries` — exceptions / corrections / fact-check phrasings),
+   *actively searches* for the dropped qualifier, and folds findings into its vote
+   (`aggregate` — refute/qualifier → contradicts, none → entails, unsearched → neutral;
+   weak-grade refutations ignored). Reasoning-only fallback with no backend (NFR-5).
+   SKILL.md Phase 4.6 wires it. *Open:* the search execution itself is LLM/tool
+   orchestration; only the query-gen + finding→vote logic is unit-tested.
 
 ### Tier 3 — provenance, ops, product
 7. **Real provenance independence** — wire/byline/syndication + first-published-vs-reprint

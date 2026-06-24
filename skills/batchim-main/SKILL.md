@@ -270,7 +270,7 @@ python3 "$SP/entail_gate.py"    --session "$S"
 
 앵커는 fabrication·number-swap을 막지만 **quote-mining**(진짜·verbatim·숫자 일치하는 인용이 더 넓은 주장을 함의하지 않음 — EU AI법 "예외 있음" 케이스)은 못 막는다. M1 검증자가 **verified 후보**가 될 high-risk 주장마다, **3개 prompt-diverse 렌즈** 서브에이전트를 띄운다 (검증자와 달리 스냅샷에 격리하지 않고 **세계지식으로 적대적 검토** 허용 — 이게 quote-mining을 잡는 핵심):
 
-- **refute** — 누락된 한정어/예외/scope 과잉으로 주장이 false·misleading한지 적대적으로 찾는다.
+- **refute** — 누락된 한정어/예외/scope 과잉으로 주장이 false·misleading한지 적대적으로 찾는다. **검색 백엔드가 있으면 reasoning에 그치지 말고 contrary-retrieval로 강화한다**(omission/quote-mining 방어 최강수): `contrary.generate_refutation_queries(claim)`로 예외·반증·정정 쿼리를 만들어 WebSearch/WebFetch로 *직접 반증을 찾고*, 찾은 결과를 `contrary.aggregate(findings)`로 vote(refute/qualifier 발견 → `contradicts`, 못 찾음 → `entails`, 미검색 → `neutral`)로 환원해 이 렌즈의 표로 제출한다. 검색 백엔드가 없으면 reasoning-only로 degrade(NFR-5).
 - **source_quality** — 인용 소스가 충분히 1차적·독립적·적합한지.
 - **numeric_consistency** — 주장의 scope·수량·조건이 근거와 정확히 일치(확대·조건누락 없이)하는지.
 
