@@ -1,0 +1,311 @@
+ROUND 3 review of PRD v0.3 (received 2 prior dual-engine review rounds). Robustness 4-axis: v0.3 added full input-closure manifest, two-phase commit (run_id/CURRENT), cross-version replay fail-closed, coverage invariant, lockfile stale policy, cap-exhaustion preserving verified, frozen independence_partition, verdict<->hash binding. Are these complete/consistent? Remaining gaps or NEW issues? Especially: two-phase commit fully closes torn-write/resume? input-closure truly complete? [Axis] Scenario -> v0.3 plan -> residual or 'covered' -> fix. 1-line: implementation-ready on robustness? Max 8.
+
+===BEGIN PRD v0.3===
+# 받침 (Batchim) — PRD v0.3
+
+> **In one sentence:** 받침 is a command you run inside Claude Code — `/batchim "<your research question>"` — where a **separate, isolated model judges whether each citation supports its claim, and code then mechanically enforces that the quoted text really exists in the source and the numbers/dates line up** — quarantining anything that fails. Fewer confident-but-wrong AI answers, with a machine-readable audit trail.
+
+| | |
+|---|---|
+| **Status** | Draft **v0.3** (revised after two dual-engine review rounds — prism-all + triad-all, ~32 agent-passes) |
+| **Form factor** | Claude Code plugin (skill + deterministic code gates) |
+| **Name** | **받침 (Batchim)** — locked. *받침* = the final consonant that **supports** a Korean syllable block; here, the evidence that must support every claim. |
+| **Lineage** | Fork & extension of `fivetaku/insane-research` (MIT). |
+| **MVP** | **M0 (fork + baseline) + M1 (entailment gate)**. Panel voting (M2) and RAG retrieval (M3) are fast-followers. |
+| **Author / Date** | Minwoo Park (minwoo-data) / 2026-06-23 |
+
+### 5-minute summary
+- **What:** an installable Claude Code plugin for deep research with a *verification gate*.
+- **Who:** researchers/analysts who need citation-defensible reports and have been burned by confident-but-wrong AI summaries.
+- **Why it's different:** other tools *ask* the model to be accurate; 받침 has a **separate isolated model judge each citation**, then **code mechanically enforces** that the quote is real and numbers match, and **quarantines** what it can't confirm.
+- **Scope honesty:** the gate applies to **high-risk claims only** (numbers, dates, money, legal/causal). Lower-risk claims are cited but not entailment-gated in v1.
+- **What it is NOT:** the entailment *judgment* is still made by an LLM (an isolated one). The **code** part guarantees the quote exists and numbers align — not that the judgment is semantically perfect. The defensible claim is *"an auditable, fail-closed, LLM-attested entailment gate,"* not *"truth verified in code."*
+- **MVP ships:** `/batchim "<topic>"` → a report where every **high-risk verified** claim carries a stored, source-matched entailment proof, plus an auditable ledger.
+
+---
+
+## 0. Terminology (read first)
+
+| Term | Plain meaning |
+|---|---|
+| **Entailment** | Does this source text support this claim? → `entails` / `neutral` / `contradicts`. |
+| **NLI** | The ML task of judging entailment. v1 uses an **isolated LLM verifier**, not a hosted NLI model (D1). |
+| **Isolated verifier** | A fresh Claude subagent given **only** `(claim, source text)` — no research history — so it can't be biased by the author's intent. |
+| **Mechanical anchor** | A **code** check around the LLM verdict: (1) the quoted `evidence_span` exists verbatim in the frozen source; (2) numbers/dates/units in the span match the claim. Anchors guard against *fabricated quotes*; they do **not** by themselves prove the claim is entailed (see §1). |
+| **RAG** | Retrieval-Augmented Generation — fetch the most relevant passages before judging/writing. |
+| **MCP** | Optional external tool servers (Firecrawl, Exa…) used if present. |
+| **prism / ddaro / triad** | The author's existing Claude Code helpers reused here (panel review / rate-limit throttle / convergence loop). *Internal implementation helpers — not needed to understand the MVP.* |
+| **Data-flow lock** | Synthesis may only use claims from `verified_claims.json`, and only `validate_ledger.py` produces that file — so verification can't be skipped. |
+| **High-risk claim** | A claim whose error is costly: numbers/%, currency, dates, legal/financial/causal assertions. **Classified by deterministic code** (§6.1), not by the LLM. |
+| **conflicting** | A computed condition on a claim with ≥1 `entails` **and** ≥1 `contradicts` (see §6.7); not a verdict label, not a final status. |
+
+---
+
+## 1. Background & Motivation
+
+**The pain:** AI research tools sound authoritative but routinely attach a *real* citation to a claim the source doesn't actually support. That single failure mode is what 받침 removes — as far as is possible without a human in the loop.
+
+**Starting point.** We fork `insane-research` (strong skeleton) and fix its two structural gaps:
+- **Gap A — the "code gate" trusts LLM-set booleans.** Its deterministic `classify_claim()` consumes `conflicting/primary_source/counter_refuted/risk` filled freely by the LLM; it never checks the source text entails the claim.
+- **Gap B — "2 independent sources" = distinct domain count.** Syndicated content across two domains fakes independence.
+
+### What we honestly do — and do not — claim (load-bearing; propagated to summary & §4)
+받침 does **not** verify truth in code. The entailment judgment is an **isolated LLM verifier**. What code *does* guarantee:
+1. **Fabrication guard** — the cited quote verbatim-exists in the frozen source (rejects invented quotes).
+2. **Numeric/date guard** — figures in the span are consistent with the claim (rejects number swaps).
+3. **Independence** — ≥2 sources after near-duplicate collapse (closes Gap B in the MVP).
+4. **Fail-closed bookkeeping** — only an isolated verifier's `entails` (not the author's self-report) can promote a claim, and the whole pass is signed.
+
+> **What anchors do NOT catch:** *quote-mining* — a verbatim, real quote that is locally true but doesn't entail the claim (the EU-AI-Act "with exceptions" case in §3). For that, the residual defense is the **isolated verifier's judgment** (M1), the **prism panel** (M2), and the **human-labeled precision metric** (G3). **M1 alone does not out-rigor insane-research on the quote-mining case — it out-rigors it on fabrication, number-swaps, fake independence, and auditability.** We say so plainly rather than overclaiming.
+
+This is strictly more rigorous than insane-research (which trusts the author's self-report) without pretending the verdict is deterministic. Residual trust (the verifier is an LLM) is tracked in §12 R1 and mitigated by M2 + the human-precision launch gate.
+
+---
+
+## 2. Goals / Non-Goals
+
+### Goals
+- G1. Every **high-risk** claim is promoted only when an **isolated** verifier returns `entails` from ≥2 *source-independent* sources **including ≥1 A/B-grade source**, every proof span verbatim-matches the frozen snapshot, and numeric/date anchors pass (§6.7).
+- G2. Sign the **full input-closure** of `validate_ledger.py` (frozen verdicts, snapshots, ledger, sources, dedup partition, risk vector, config, code versions) so a pass is reproducible and tamper-evident *against accidental mutation and pipeline-skip* (threat model in §6.5).
+- G3. Beat insane-research on a **pre-registered** benchmark using internal metrics **and** human-labeled entailment precision/recall (protocol in §8/§9).
+- G4. Ship as a low-friction Claude Code plugin (`/batchim "<topic>"`).
+
+### Non-Goals (v1)
+- NG1. No long-running self-hosted model servers. Ephemeral local scripts and optional MCP backends allowed.
+- NG2. No hosted SaaS / web product.
+- NG3. Batch sessions only.
+- NG4. Not a replacement for the web-search stack.
+- NG5. **Not author-tamper-proof.** Signing defends against accidental corruption and pipeline-skip, not a motivated author with the local key (§6.5 threat model).
+
+---
+
+## 3. Usage Example
+
+```
+> /batchim "Did the EU AI Act ban real-time biometric identification in public spaces?"
+[batchim] scoping → planning → retrieving(+snapshot) → dedup → verifying → synthesizing
+Report: RESEARCH/eu_ai_act_biometric_20260623/outputs/
+  ✓ 14 high-risk claims verified (each with a source-matched quote)
+  ⚠ 3 quarantined → "Unresolved"   (e.g. exact effective date: sources disagree)
+  ✗ 1 refuted → "Refuted"          (a credible source contradicted it)
+```
+> **Quarantine is a feature, not a defect.** On contested topics a *high* quarantine rate is expected and correct — the gate would rather abstain than assert.
+
+**The differentiator, concretely:** insane-research **could** mark *"the Act bans all real-time biometric ID"* verified because a blog asserts it (illustrative failure mode). 받침's isolated verifier reads the cited text, sees *"…with law-enforcement exceptions,"* labels it `neutral` → the claim is **quarantined**, not asserted.
+
+---
+
+## 4. Differentiation
+
+| | Generic bot | insane-research | **받침 (Batchim)** |
+|---|---|---|---|
+| Verification | "be accurate" prompt | Gate over **LLM-set** booleans | Gate over isolated-verifier verdicts **(verdict = isolated LLM; span/number checks = code)** |
+| Claim↔evidence | Implicit | `src_id`, **unchecked** | Verdict **+ verbatim-span match in frozen snapshot** |
+| Independence | None | Distinct-domain (fakeable) | Canonical-URL + near-dup collapse (M1) → semantic (M3) |
+| Adversarial | None | Single agent (strict only) | prism **panel votes** (M2) |
+| Auditability | None | Source list | **Auditable ledger**: evidence cards, spans, hashes, verdicts, contradiction log, signed manifest |
+
+**Moat (evidence, not rhetoric):** a public, adversarial, third-party-labeled benchmark where 받침 beats baselines on *human-judged* grounding, plus an inspectable auditable ledger. We sell *"an auditable research ledger,"* not *"less hallucination."*
+
+---
+
+## 5. Architecture Overview
+
+```
+batchim/skills/batchim-main/scripts/
+  classify_risk.py    # deterministic high-risk classifier (regex/gazetteer/POS — NO LLM/network) → risk_classifications.jsonl
+  snapshot.py         # freeze source text + content hash
+  dedup.py            # M1: canonical-URL + simhash near-dup → independence_partition.json ; M3: + semantic
+  entail_gate.py      # spawn isolated verifier per (high-risk claim × cited span); apply anchors → entailment_verdicts.jsonl
+  validate_ledger.py  # SOLE joiner: join → decide(§6.7) → sign(§6.5); internal stages join/decide/sign separated
+  eval_report.py      # metrics (§9)
+```
+
+### Pipeline (one writer per artifact; finalize is a two-phase commit, §6.5)
+```
+1 Scope → 2 Plan → 3 Retrieve(+snapshot freeze) → 3.5 dedup(independence_partition, frozen) → 4 Triangulate
+        author writes claim_ledger.jsonl (author-owned, immutable; claimed_* only)
+                                  ▼
+   4.5 entail_gate.py:  classify_risk(code) → per high-risk claim × cited span:
+        isolated verifier {entails|neutral|contradicts} + verbatim-span match(frozen snapshot)
+        + numeric/date/unit check  → entailment_verdicts.jsonl (gate-owned; bound to claim_text_hash + snapshot_hash)
+        (M2: prism panel votes — NOT in M1)
+                                  ▼
+   validate_ledger.py (SOLE joiner): ledger ⋈ verdicts ⋈ sources ⋈ partition ⋈ risk
+        → verified_claims.json | unresolved | refuted  + signed manifest (full input closure)
+                                  ▼
+5 Synthesis (verified-only) → 6 QA → 7 Output ── eval_report.py HARD gate (§6.6)
+```
+
+---
+
+## 6. Functional Requirements
+
+### 6.1 Deterministic risk classification
+- FR-R0. `classify_risk.py` computes `computed_risk` from claim text using **regex + fixed gazetteers + POS rules only — NO LLM, NO network calls** (preserves the "not by the LLM" guarantee and NFR-3). Triggers: number/%/currency, date, or (entity-keyword + legal/financial/causal verb). It **must err toward over-classifying** (false-high is cheap, false-low is a leak); target **`risk_recall ≥ 0.98`** on a labeled fixture set. Output: gate-owned `risk_classifications.jsonl` (`claim_id, computed_risk, matched_rule_ids, classifier_version, schema_version`). **All** claims pass through `classify_risk.py` before any inherited path is chosen; the gate's `computed_risk` overrides the author's `claimed_risk`. (Model-based NER, if ever wanted, is M3.)
+
+### 6.2 Independence (closes Gap B in MVP)
+- FR-I0. **M1 independence** = distinct cluster after `dedup.py`: canonical-URL + normalized-text simhash/shingle + publication-time clustering. Emitted as a **first-class, frozen artifact** `independence_partition.json` (`source_id → cluster_id`), deterministic given a fixed source set (stable tiebreak by `source_id`). Ships in **M1**.
+- FR-I1. **M3 upgrade** = semantic near-dup. Must distinguish *content* near-dup from *provenance* dependence (shared wire/citation chain); record provenance fields (byline/wire/press-release/timestamp order) where detectable, else mark "lexically independent only."
+
+### 6.3 Entailment gate ★ MVP (M1)
+- FR-E1. Per high-risk claim, run the isolated verifier on each cited span; persist a **span lifecycle state** `done|failed` and a **verdict label** `entails|neutral|contradicts` (these are *distinct* vocabularies — see §6.7 mapping). Timeout ⇒ `failed`; retry once (separate retry budget, §7); then quarantine. No span may remain `pending` at finalize.
+- FR-E2. Apply anchors (Appendix B normalization): span-match against frozen snapshot; numeric/date consistency. Anchors apply **symmetrically** to `entails` and `contradicts`. A label whose span fails to match is normalized to `neutral`.
+- FR-E3. **`validate_ledger.py` MUST assign each high-risk claim exactly one status using the §6.7 ordered algorithm, and MUST read only `computed_*` fields (plus claim text / source ids for joining) — never `claimed_*` status fields.**
+- FR-E4. **Fail-closed:** missing/`failed`/`malformed`/budget-skipped verdicts, or a failed span anchor, yield terminal **`unresolved`** (never inherit an author boolean). These are **not** errors (not exit 2).
+
+### 6.4 Artifact ownership & schema
+- FR-A1. `claim_ledger.jsonl` author-owned, immutable after write (append-only new records allowed before `validate_ledger.py`; corrections require a new ledger version). `claimed_*` only.
+- FR-A2. Gate-owned outputs (`computed_*`): `risk_classifications.jsonl`, `independence_partition.json`, `entailment_verdicts.jsonl`. The gate never mutates the ledger.
+- FR-A3. `validate_ledger.py` is the **sole** joiner → `verified_claims.json`.
+- FR-A4. Every artifact carries `schema_version`. Unknown labels / malformed records ⇒ claim status `unresolved` + recorded `validation_error` (never silently `neutral`).
+- FR-A5. **Referential + binding integrity** (exit 2): every `source_id` resolves in `sources.jsonl`; every verdict's bound `claim_text_hash`/`snapshot_hash` matches current artifacts.
+
+### 6.5 Tamper-evidence, replay, commit (threat model explicit)
+- FR-S1. The signed **manifest is the full input-closure fingerprint** of `validate_ledger`: hashes of `claim_ledger`, `sources.jsonl`, each snapshot, `independence_partition`, `risk_classifications`, `entailment_verdicts`, `verified_claims`, the **resolved config** (caps/thresholds/grade map), and **code/logic versions** (`classify_risk`, `dedup`, `entail_gate`, `validate_ledger`, decision-table). sha256 stored in `state.json`.
+- FR-S2. **Determinism scoped:** `validate_ledger`'s output is reproducible given the signed closure. On resume, **replay frozen verdicts**; re-query only spans with no frozen verdict. **Cross-version replay:** if any signed `*_version`/`schema_version` is outside the running tool's supported set ⇒ **fail-closed (exit 2)** "incompatible version," with an explicit migration command (no silent in-place upgrade).
+- FR-S3. **Two-phase commit:** write all outputs under a `run_id` staging dir; write the manifest + sha into `state.json` **last** as the atomic commit point; advance a `CURRENT` pointer. On startup, a run whose commit marker ≠ staged `run_id`, or whose manifest doesn't match disk, is **incomplete** ⇒ discard/roll-forward (never trusted as authoritative).
+- FR-S4. **Threat model (stated, not implied):** signing detects *accidental* mutation, partial/torn writes, and pipeline-skip. It does **not** defend against a motivated author holding the local key (NG5). For author-tamper-evidence, an external anchor (git commit / timestamp service) is an optional M2+ add. Docs separate `audit_integrity` (signing) from `entailment_correctness` (human-precision metric).
+
+### 6.6 Exit-code & error taxonomy (single taxonomy)
+- FR-X1. `entail_gate` / `validate_ledger` exit codes: **0** = ran, allowlist written; **1** = ran, 0 verified (legitimate abstention — still produces an abstention report, never body claims from unverified high-risk claims); **2** = **structural error only** (schema break, orphan id, hash-binding mismatch, incomplete two-phase commit). Orchestrator **blocks synthesis on exit 2 and on {no exit code / lockfile still held / manifest absent}** — synthesis requires a **positive** check (valid signed manifest present), not merely "no exit 2."
+- FR-X2. `eval_report.py` is a Phase-7 **hard gate**: FAIL (exit 2, output blocked) if `missing_entailment_proof_rate > 0` OR `citation_resolution_rate < 100%` OR the **coverage invariant** fails.
+- FR-X3. **Coverage invariant (new):** `count(high-risk claims with a terminal verdict) == count(high-risk claims in ledger)`. A gate that silently skipped high-risk claims (crash/budget/throttle) FAILS here even if every *verified* claim has a proof.
+
+### 6.7 Decision algorithm (single source of truth)
+For each high-risk claim, build the per-`(claim, source)` tuple:
+`normalized_verdict ∈ {entails, neutral, contradicts, failed, malformed, missing}`, `anchors_ok ∈ {true,false}`, `cluster_id` (from `independence_partition`), `quality_rating (A–E)`, `producer ∈ {verifier, panel}`, `cited`.
+Normalize: `failed|malformed|missing` ⇒ treated as `neutral` for promotion (and recorded); a span with `anchors_ok=false` ⇒ `neutral`.
+Then apply **in order**:
+1. **structural** — any orphan id / schema break / incomplete commit ⇒ **exit 2** (not a status).
+2. **refuted** — ≥1 `contradicts` with `anchors_ok` from an **A/B** source (M1: no override; M2: unless overturned by panel, FR-P3).
+3. **conflict block** — ≥1 `entails` AND ≥1 `contradicts` (any grade, `anchors_ok`) ⇒ **`unresolved`** (a non-refuting contradiction must not be silently ignored).
+4. **verified** — iff **all**: (a) ≥2 `entails` with `anchors_ok` from **distinct `cluster_id`s, including ≥1 A/B-grade source within that entailing set**; (b) no blocking condition above.
+5. **unresolved** — otherwise.
+**Cited-but-unused policy:** only `proof_source_ids` (the spans used for promotion) must pass anchors; non-proof citations that are `neutral`/unmatched are dropped from the body, not penalized.
+Non-high-risk claims follow the inherited cite-and-write path (after `classify_risk` confirms they are not high-risk).
+
+### 6.8 prism panel (M2) & RAG (M3)
+- FR-P1. M2: per high-risk/contested claim, **N=3** panel (refute / source-quality / numeric-consistency). **Consensus = 2-of-3**; a 1-1-1 split or any missing/failed vote ⇒ **quarantine (`unresolved`)** — never majority-of-two-noisy-votes. Disagreement ⇒ triad convergence, **hard cap 3 rounds**.
+- FR-P2. Throttle **all** verifier/panel fan-out (M1 included) to 2–3 concurrent with liveness + sequential fallback (ddaro guard); shared per-session **budget** (NFR-1) with an **atomic counter**.
+- FR-P3. **Producer-aware aggregation:** raw verdicts are append-only with `producer`; `validate_ledger` derives one `effective_verdict` per `(claim, source)` — **panel supersedes verifier when present** (record `supersedes_verdict_id`). Whether a panel `entails` counts toward §6.7(4a) is **explicit: yes, panel `entails` with `anchors_ok` counts; on the same `(claim,source)` a panel verdict replaces the verifier's**. **Enabling M2 is a manifest-invalidating event:** re-run `validate_ledger`, re-sign, mark prior manifest superseded; a panel `unresolved`/tie may **demote** an M1-verified claim.
+- FR-R3. M3: embeddings + cross-encoder rerank + hybrid retrieval + query expansion. Backend = committed local script default; MCP if present; **no backend ⇒ lexical dedup (FR-I0), independence flagged best-effort** (NFR-5).
+
+### 6.9 Inherited
+Data-flow lock; abstention; resumable `state.json`; A–E grading; templates; `/batchim`, `resume`, `status`, structured-JSON query.
+
+---
+
+## 7. Non-Functional Requirements
+- **NFR-1 Cost.** Caps: `max_verifier_calls` (default 120), `max_spans_per_claim` (3); a **separate small retry budget** (retries do **not** consume the verifier cap). `/batchim status` shows a **coarse upper-bound** estimate before launch (claims aren't classified until 4.5 — stated as an upper bound, or a cheap pre-pass). **On cap-exhaustion:** evaluate §6.7 on whatever verdicts already exist (so an already-`verified` claim finalizes verified), then mark the *remainder* `unresolved` with a coverage warning; cap-aborted runs are **resumable** via frozen verdicts. **Cap vs abstention-cap precedence:** the cost cap wins (run completes with higher abstention); a run is never made structurally impossible to pass — instead it reports degraded coverage.
+- **NFR-2 Reliability.** Per-call timeout → `failed` → one foreground retry → quarantine. No silent background death (liveness checks).
+- **NFR-3 Determinism (scoped).** `validate_ledger` output + signature reproducible given the signed closure (FR-S1/S2). Verifier generation is not claimed deterministic.
+- **NFR-4 Concurrency safety.** Per-session lockfile (PID + heartbeat). **Stale-lock policy:** reclaim only if `heartbeat stale AND PID dead`; `heartbeat stale AND PID alive` ⇒ refuse with diagnostic, require `--force`. Atomic temp-then-rename per file; cross-file consistency via the FR-S3 two-phase commit.
+- **NFR-5 Graceful degradation.** Missing MCP ⇒ WebSearch/WebFetch; missing embedding backend ⇒ lexical dedup; all degradations recorded in `state.json`.
+- **NFR-6 Privacy.** Artifacts stay local. Egress: search queries + `(claim, span)` pairs go to configured search/LLM providers; nothing else; no telemetry.
+
+---
+
+## 8. MVP Scope & Phasing
+
+| Milestone | Scope | Done when |
+|---|---|---|
+| **M0** Fork & baseline | Fork → rebrand 받침; run end-to-end; **freeze benchmark + baseline + human-label protocol** | `/batchim` produces a report; **5 benchmark topics frozen; insane-research baseline metrics recorded; human-label set built per the protocol below** |
+| **M1** Entailment gate ★ | FR-R0, FR-I0, FR-E1–E4, FR-A1–A5, FR-S1–S4, FR-X1–X3, FR-P2(throttle), §6.7, Appendix A/B | `missing_entailment_proof_rate=0`; **coverage invariant holds**; every verified claim has a span-matched proof; `entailment_precision` reported vs human set with stated CI; abstention cap honored; throttle + budget enforced |
+| **M2** prism panel | FR-P1, FR-P3 | booleans decided by 2-of-3 consensus; producer-aware aggregation; beats M1 on `leak_rate` by the pre-registered margin (n=5) |
+| **M3** RAG quality | FR-I1, FR-R3 | semantic dedup changes independence outcomes; rerank raises `verified_recall` without raising `leak_rate` |
+
+**Human-label protocol (M0 deliverable, makes G3 measurable):** ≥2 **independent** labelers, written rubric, labels at the **(claim, span)** unit matching the verifier I/O, **Cohen's κ ≥ 0.6** as an acceptance gate, labelers **blind** to the system's verdict, and `n` large enough to bound the **false-entail rate** with a stated confidence interval. A single labeler labeling their own system's output is disallowed.
+
+**MVP = M0 + M1.** Benchmark, baseline, and label protocol are **M0 deliverables**, not open questions.
+
+---
+
+## 9. Success Metrics (all thresholds pre-registered before tuning)
+**Structural (gate-enforced, must hold):**
+- `missing_entailment_proof_rate = 0` (every verified claim has a span-matched stored proof).
+- `citation_resolution_rate = 100%`; `span_match_rate = 100%` for verified claims; **coverage invariant** (FR-X3) holds.
+
+**Correctness (external — the real bar):**
+- `entailment_precision` / `entailment_recall` vs the human-labeled set; **false-entail rate** is the headline number, with a CI.
+
+**Health (anti-gaming, pre-registered thresholds):**
+- `abstention_rate` / `quarantine_rate` — **capped** (e.g. a report verifying <X% of high-risk claims fails even at leak 0).
+- `leak_rate` *(defined: fraction of `unresolved`+`refuted` claims that appear assertively in the body — inherited from insane-research's eval)* — lower than baseline by a pre-registered margin.
+- `verified_recall` *(defined: verified high-risk claims ÷ total high-risk claims)* — reported (raising it must not raise `leak_rate`).
+
+A/B: gate-on vs gate-off, and 받침 vs insane-research, on 5 frozen topics; metrics & thresholds pre-registered.
+
+---
+
+## 10. Key Tech Decisions
+- **D1.** Entailment engine = isolated structured-output verifier subagent + mechanical anchors (not hosted NLI). Local NLI/cross-encoder = M3 option.
+- **D2.** Embeddings (M3): committed local script default; MCP if present; per-session disposable; lexical fallback.
+- **D3.** Reuse prism/ddaro/triad patterns.
+- **D4.** Versioned superset schemas with `claimed_*`/`computed_*` namespaces (Appendix A).
+- **D5.** `validate_ledger.py` internally separates **join → decide(§6.7) → sign** as pure stages (decision logic unit-testable against frozen fixtures, independent of crypto).
+
+---
+
+## 11. Open Questions
+- ~~Q1 Name~~ → **받침**. ~~Q5 Benchmark~~ → **M0 deliverable**.
+- Q2. Distribution: standalone repo + list in `haroom_plugins` (recommended).
+- Q3. Entailment granularity M1: claim-vs-cited-span **with a fixed surrounding context window** (decided); full-source-chunk retrieval = M3.
+- Q4. Which inherited reference docs to keep verbatim vs rewrite (track in M0).
+- Q6. Should the verifier run an **independent retrieval** for contradicting evidence (beyond the author's span)? Strong for rigor; cost tradeoff → evaluate in M2.
+
+---
+
+## 12. Risks
+- R1. **Residual verifier trust (LLM).** Mitigation: anchors (fabrication/number) + heterogeneous panel (M2) + human-precision launch gate; honest framing (§1).
+- R2. **Correlated model error** in same-model panels. Mitigation: distinct lenses + abstain-on-split (FR-P1) + contrary-evidence search (Q6); ship panel only if it beats single-verifier on human labels.
+- R3. **Quote-mining** (verifier sees author-picked span). Mitigation: fixed context window (Q3); M2 contradiction search; explicitly *not* claimed closed in M1 (§1).
+- R4. **Cost blow-up.** Mitigation: high-risk-only + deterministic risk + budget caps + cap-exhaustion behavior (NFR-1).
+- R5. **Rate limits.** Mitigation: throttle from M1 (FR-P2).
+- R6. **Stale web content.** Mitigation: snapshots + hashes (FR-S1).
+- R7. **Implementation complexity** (many artifacts/signing/resume). Mitigation: make `validate_ledger` "aggressively boring" — full schema validation, orphan/hash checks, golden fixtures for **every** §6.7 branch (D5).
+- R8. **Scope creep.** Mitigation: strict phasing; MVP entailment-only.
+- R9. **License/attribution.** Mitigation: preserve NOTICE; correct upstream link (§13).
+
+---
+
+## 13. Attribution
+Derivative of **`fivetaku/insane-research`** (distributed via the `fivetaku/gptaku_plugins` marketplace; MIT). Retains the data-flow-lock + eval methodology; adds deterministic risk classification, source snapshotting, the entailment gate with mechanical anchors, explicit artifact-ownership & input-closure signing, lexical/semantic dedup, and a prism-style panel. License: MIT + NOTICE crediting upstream.
+
+---
+
+## Appendix A — Artifact Schemas (finalize in M0)
+```jsonc
+// sources.jsonl
+{ "id":"src_001","url":"…","canonical_url":"…","domain":"…","quality_rating":"A|B|C|D|E",
+  "fetched_at":"…","content_hash":"sha256:…","snapshot_path":"…","byline":"…","wire":null,"schema_version":1 }
+// claim_ledger.jsonl  (AUTHOR-OWNED, immutable; claimed_*)
+{ "claim_id":"clm_001","text":"…","claim_text_hash":"sha256:…","claimed_risk":"high|normal",
+  "claimed_source_ids":["src_001","src_003"],"schema_version":1 }
+// risk_classifications.jsonl  (GATE-OWNED)
+{ "claim_id":"clm_001","computed_risk":"high|normal","matched_rule_ids":["num","date"],
+  "classifier_version":"…","schema_version":1 }
+// independence_partition.json  (GATE-OWNED, frozen)
+{ "src_001":"cl_A","src_003":"cl_B","dedup_version":"…","source_set_id":"…","schema_version":1 }
+// entailment_verdicts.jsonl  (GATE-OWNED; computed_*; append-only)
+{ "verdict_id":"v_001","claim_id":"clm_001","source_id":"src_003","producer":"verifier|panel",
+  "panel_round":null,"supersedes_verdict_id":null,"vote_count":null,
+  "label":"entails|neutral|contradicts","span_state":"done|failed",
+  "evidence_span":"…","span_char_start":1234,"span_char_end":1310,
+  "span_matched":true,"numeric_ok":true,"source_grade":"A",
+  "claim_text_hash":"sha256:…","snapshot_hash":"sha256:…","schema_version":1 }
+// verified_claims.json  (validate_ledger output; computed status only)
+{ "claim_id":"clm_001","status":"verified|unresolved|refuted","status_reason":"…",
+  "independent_entails":2,"proof_source_ids":["src_001","src_003"],"proof_grades":["A","B"],
+  "refuted_by":null,"conflict":false }
+// manifest (signed; sha256 in state.json)
+{ "manifest_version":1,"run_id":"…","input_hashes":{…all artifacts + config…},
+  "code_versions":{"classify_risk":"…","dedup":"…","entail_gate":"…","validate_ledger":"…","decision_table":"…"},
+  "enabled_producers":["verifier"],"superseded_by":null }
+```
+
+## Appendix B — Span-match normalization (normative)
+`span_match(span, snapshot)`: apply identically to both, then test contiguous substring:
+1. Unicode **NFKC**. 2. Decode HTML entities. 3. Fold smart quotes/dashes/ellipses to ASCII. 4. Collapse runs of Unicode whitespace (incl. NBSP) to one space; strip ends. 5. **Case-sensitive.** Match = contiguous; paraphrase/non-contiguous ⇒ fail. Store `span_char_start/end` against the frozen snapshot. **An M1 fixture corpus of `(snapshot, span, expected)` cases is the acceptance test for this function** (distinguishes a normalization bug from genuine fabrication).
+
+===END===

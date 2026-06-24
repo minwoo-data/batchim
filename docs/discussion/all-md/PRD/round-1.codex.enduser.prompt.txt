@@ -1,0 +1,222 @@
+Read the target document and evaluate ONLY from this perspective:
+EndUser: Can a first-time reader answer WHAT/WHY/HOW in 5 minutes? Find buried value prop, unexplained jargon, missing usage example, hard-to-find MVP.
+
+## Target document (a PRD):
+===BEGIN===
+# 받침 (Batchim) — PRD
+
+> **Working codename: 받침 (Batchim)** — Korean for *"the support beneath."* Evidence that holds a claim up.
+> A Claude Code plugin for **deep research that verifies its claims against evidence — in code, not in prose.**
+
+| | |
+|---|---|
+| **Status** | Draft v0.1 (pre-build) |
+| **Form factor** | Claude Code plugin (skill + deterministic code gates) |
+| **Lineage** | Fork & extension of `fivetaku/insane-research` (MIT) — attribution required |
+| **Author** | Minwoo Park (minwoo-data) |
+| **Date** | 2026-06-23 |
+
+---
+
+## 1. Background & Motivation
+
+"Deep research" agents are everywhere, but almost all of them **claim** hallucination-resistance while structurally **trusting the LLM's own word** that a claim is supported. We analyzed the strongest open example, `insane-research`, and found a genuinely good skeleton with two root weaknesses that define our opportunity.
+
+### What insane-research gets right (we keep this)
+- **Prompt orchestrates, code verifies.** A 7-phase prompt flow (SKILL.md) drives research; a Python gate (`validate_ledger.py`) computes claim status deterministically.
+- **Data-flow lock (the key idea).** Synthesis may only assert claims present in `verified_claims.json`, and *only the gate produces that file*. Skipping verification yields empty synthesis input — verification can't be bypassed because it's a data dependency, not a prompt suggestion. A sha256 signature in `state.json` makes the pass tamper-evident.
+- **Abstention by default** (unresolved / refuted claims are quarantined to annex sections), A–E source grading, resumable `state.json`, and a deterministic eval scorer (`eval_report.py`: leak / citation-resolution / orphan / coverage).
+
+### The two root weaknesses (our opening)
+- **Weakness A — "Code verification" is really bookkeeping over LLM-set booleans.** `classify_claim()` is deterministic, but its inputs (`conflicting`, `primary_source`, `counter_refuted`, `risk`) are filled freely by the LLM. The gate never checks that a cited source's *text actually entails the claim*. A hallucinated claim with a real `src_id` that doesn't support it passes.
+- **Weakness B — "2 independent sources" = distinct domain count.** Syndicated / copy-pasted content across two domains counts as "independent," so the cornerstone cross-verification assumption is fakeable.
+
+**Thesis:** Keep insane-research's data-flow-lock skeleton; replace the gate's *inputs* (LLM self-report) with **computed evidence** — (1) RAG-grounded retrieval, (2) prism-style multi-agent adversarial votes, (3) real claim↔evidence entailment. Result: the only deep-research tool that verifies grounding **in code**, not in prose.
+
+---
+
+## 2. Goals / Non-Goals
+
+### Goals
+- G1. Every high-risk claim in the final report is backed by a **computed** entailment check between the claim and its cited evidence — not the author agent's self-assessment.
+- G2. Preserve and strengthen the data-flow lock: synthesis consumes only gate-approved claims; the gate is tamper-evident.
+- G3. Measurably reduce hallucination leakage vs insane-research on a shared benchmark (eval metrics + new entailment metrics).
+- G4. Ship as an installable Claude Code plugin with the same low-friction UX (`/batchim <topic>`).
+
+### Non-Goals (v1)
+- NG1. Self-hosting NLI/embedding model servers. (Plugin form ⇒ use in-session models / lightweight local scripts.)
+- NG2. A hosted SaaS or web product. (Local CLI demo + optional static report only.)
+- NG3. Real-time / streaming research. Batch sessions only.
+- NG4. Replacing the user's general web-search stack. We layer on top of WebSearch/WebFetch/MCP.
+
+---
+
+## 3. Target Users
+- **Primary:** technical researchers / analysts who need *citation-defensible* reports (due diligence, competitive intel, legal/medical/financial scans) and have been burned by confident-but-wrong AI summaries.
+- **Secondary:** developers building research/agent pipelines who want a reusable verification gate.
+
+---
+
+## 4. Differentiation
+
+| | Generic "deep research" bot | insane-research | **받침 (Batchim)** |
+|---|---|---|---|
+| Verification | Prompt asks LLM to "be accurate" | Deterministic gate over **LLM-set** booleans | Deterministic gate over **computed** entailment + votes |
+| Claim↔evidence | Implicit | `src_id` link, unchecked | **NLI entailment** per (claim, evidence span) |
+| Independence | None | Distinct-domain count (fakeable) | Semantic near-dup collapse → true independence |
+| Adversarial check | None | Single verify agent (strict mode only) | **prism-style panel votes** decide booleans |
+| Retrieval | Keyword | Keyword + scraping fallback | + embeddings / rerank / hybrid (later phase) |
+
+One-liner: *"Research that proves its sources entail its claims — in code."*
+
+---
+
+## 5. Architecture Overview
+
+Plugin layout mirrors insane-research (proven), with new code gates:
+
+```
+batchim/
+├── .claude-plugin/plugin.json
+├── commands/batchim.md
+└── skills/
+    └── batchim-main/
+        ├── SKILL.md                  # orchestration (prompt)
+        ├── scripts/
+        │   ├── entail_gate.py        # ★ NEW — computes entailment-backed claim status
+        │   ├── validate_ledger.py    # extended: consumes computed fields, true independence
+        │   ├── eval_report.py        # extended: semantic leak detection
+        │   └── dedup.py              # ★ NEW — semantic near-dup collapse (axis ①, phased)
+        ├── references/               # citation/quality/phase contracts (inherited + edited)
+        └── assets/templates/         # report templates (inherited)
+```
+
+### Pipeline (7 phases, modified)
+```
+1 Scope → 2 Plan → 3 Retrieve → 3.5 Dedup/ground (NEW) → 4 Triangulate
+                                                              │
+                                              build claim_ledger.jsonl
+                                                              ▼
+                                   4.5 ENTAILMENT GATE (NEW, MVP) ── per (claim, evidence):
+                                        constrained verifier → {entails|neutral|contradicts}
+                                        + prism-panel votes → conflicting / counter_refuted
+                                                              ▼
+                              validate_ledger.py → verified_claims.json (allowlist)
+                                                              ▼
+5 Synthesis (verified-only) → 6 QA → 7 Output  ── eval_report.py gate
+```
+
+### How "real entailment" works inside a plugin (no hosted model)
+Per high-risk claim, for each cited evidence span, a **dedicated verifier agent** (separate context from the claim's author agent → independence) is forced via **structured output** to return:
+```json
+{ "claim_id": "clm_001", "source_id": "src_003",
+  "label": "entails | neutral | contradicts",
+  "evidence_span": "verbatim quote from source",
+  "note": "1-line rationale" }
+```
+`entail_gate.py` then **computes** the ledger booleans from these verdicts (not from the author's self-report):
+- `entails` from ≥2 *independent* (post-dedup) sources → eligible for `verified`
+- any `contradicts` from a credible source → `counter_refuted=true` → refuted
+- only `neutral`/single-source → `unresolved`
+
+This keeps the "code consumes computed fields" principle even without a self-hosted NLI model: the verdicts come from an isolated panel and are *aggregated in code*, closing Weakness A.
+
+---
+
+## 6. Functional Requirements
+
+### Epic ③ — Entailment Gate  ★ MVP (M1)
+- FR-E1. For every `risk:"high"` claim, run entailment verification on each cited evidence span via an isolated verifier (structured output).
+- FR-E2. `entail_gate.py` writes `artifacts/entailment.jsonl` and injects computed fields into `claim_ledger.jsonl`; LLM-authored `conflicting`/`counter_refuted`/`primary_source` are **ignored** when computed values exist.
+- FR-E3. A claim reaches `verified` only with ≥2 independent `entails` verdicts and no unrefuted `contradicts`.
+- FR-E4. Verifier runs **isolated** from the author agent (no shared context) to prevent self-confirmation.
+- FR-E5. `eval_report.py` adds `entailment_coverage` (% of verified claims with stored entailment proof) and `ungrounded_verified_rate` (must be 0).
+
+### Epic ② — prism-style Verification Panel (M2)
+- FR-P1. For contested or high-risk claims, run an N-angle panel (refute / steelman / source-quality / numeric-consistency) and decide `counter_refuted`/`conflicting` by **majority vote** (reuse prism's confirm/refute pattern).
+- FR-P2. Throttle to 2–3 concurrent with liveness check + sequential fallback (reuse ddaro rate-limit guard); never a 16-wide fan-out.
+- FR-P3. triad-style convergence rounds for claims where the panel is split.
+
+### Epic ① — RAG Retrieval Quality (M3)
+- FR-R1. Embed source snippets into a per-session vector index.
+- FR-R2. `dedup.py` collapses semantic near-duplicates **before** independence counting (closes Weakness B).
+- FR-R3. Cross-encoder / LLM-rerank evidence per claim; hybrid (BM25 + dense) retrieval; query expansion in Phase 2.
+
+### Inherited (keep, adapt)
+- FR-I1. Data-flow lock + sha256 signature in `state.json`.
+- FR-I2. Abstention: unresolved/refuted quarantined to annex; verified-only synthesis.
+- FR-I3. Resumable `state.json`; A–E grading; report/website templates.
+- FR-I4. `/batchim`, `/batchim resume`, `/batchim status`, structured-JSON query input.
+
+---
+
+## 7. Non-Functional Requirements
+- NFR-1 **Cost control.** Entailment + panel run **only on high-risk claims**, not every sentence. Budget caps + throttled batches.
+- NFR-2 **Reliability.** No silent background death: foreground/sequential fallback when reliability matters; liveness checks on any background agents.
+- NFR-3 **Determinism of the gate.** Given fixed inputs, gate output and signature are reproducible.
+- NFR-4 **Privacy.** Research artifacts stay local; no external upload by default.
+- NFR-5 **Graceful degradation.** Missing optional MCP (Firecrawl/Exa) ⇒ falls back to WebSearch/WebFetch.
+
+---
+
+## 8. MVP Scope & Phasing
+
+| Milestone | Scope | Done when |
+|---|---|---|
+| **M0** Fork & green | Fork insane-research, rebrand 받침, install + run end-to-end unchanged | `/batchim <topic>` produces a report; eval scorer runs |
+| **M1** Entailment gate ★ | Epic ③ (FR-E1..E5); extend validate_ledger + eval_report | `ungrounded_verified_rate = 0` on test set; entailment proof stored per verified claim |
+| **M2** prism panel | Epic ② (FR-P1..P3) | Booleans decided by votes, not self-report; A/B beats M1 on leak_rate |
+| **M3** RAG quality | Epic ① (FR-R1..R3) | Near-dup collapse changes independence outcomes; rerank improves coverage |
+
+MVP = **M0 + M1**. M2/M3 are fast-followers.
+
+---
+
+## 9. Success Metrics
+- **Primary:** `ungrounded_verified_rate = 0` (no verified claim lacks a stored entailment proof).
+- `leak_rate` (unresolved/refuted leaking into body) lower than insane-research baseline on a shared benchmark.
+- `citation_resolution_rate = 100%`, `entailment_coverage ≥ 0.95` on verified claims.
+- A/B: gate-on vs gate-off and 받침 vs insane-research on 5 fixed topics (reuse `eval_report.py` + new metrics).
+
+---
+
+## 10. Key Tech Decisions
+- **D1. Entailment engine = isolated structured-output verifier agent** (not self-hosted NLI), to stay plugin-native. Revisit a local NLI model only if cost/latency demand it.
+- **D2. Embeddings (M3)** via a lightweight local script or available MCP; vector index is per-session and disposable.
+- **D3. Reuse, don't reinvent** prism/ddaro patterns for panel voting + rate-limit guarding.
+- **D4. Backward-compatible artifacts** — keep `sources.jsonl` / `claim_ledger.jsonl` schemas a superset of insane-research so the eval harness transfers.
+
+---
+
+## 11. Open Questions / Decisions Needed
+- Q1. **Name.** 받침 (Batchim) vs alternatives: 따짐 (Ttajim, "scrutinize"), 가림 (Garim, "discern true/false"), 잣대 (Jatdae, "yardstick"). Decide before M0 rename.
+- Q2. Distribution: publish under the user's own `haroom_plugins` marketplace, or standalone repo? (Recommend: standalone repo + list in marketplace.)
+- Q3. Entailment granularity: claim-vs-snippet only, or claim-vs-full-source-chunk with retrieval? (MVP: claim-vs-cited-snippet.)
+- Q4. How much of insane-research's reference docs to inherit verbatim vs rewrite for the new gate semantics.
+- Q5. Benchmark set: which 5 topics, and do we hand-label ground truth for `ungrounded_verified_rate`?
+
+---
+
+## 12. Risks
+- R1. **Cost blow-up** if entailment runs on every claim → mitigate via high-risk-only + budget caps (NFR-1).
+- R2. **Verifier is still an LLM** — structured isolated verdicts reduce but don't eliminate model error; panel voting (M2) is the hedge.
+- R3. **Rate limits** on multi-agent fan-out → throttle + sequential fallback (FR-P2).
+- R4. **Scope creep** across 3 axes → strict phasing; MVP is entailment-only.
+- R5. **License/attribution** — derivative of insane-research (MIT); preserve NOTICE + credit.
+
+---
+
+## 13. Attribution
+Derivative work of [`fivetaku/insane-research`](https://github.com/fivetaku/gptaku_plugins) (MIT). Retains the data-flow-lock architecture and eval methodology; adds the entailment gate, semantic dedup, and prism-style verification panel. License: MIT, with NOTICE crediting the upstream author.
+
+===END===
+
+## Output ONLY this YAML:
+verdict: PASS | REVISE | BLOCK
+top_issues:
+  - severity: high | med | low
+    locus: "..."
+    problem: "..."
+    proposed_fix: "..."
+open_questions:
+  - "..."

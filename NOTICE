@@ -1,0 +1,15 @@
+받침 (Batchim)
+Copyright (c) 2026 Minwoo Park (minwoo-data)
+
+This product is a derivative work of:
+
+  insane-research
+  Author: fivetaku
+  Source: https://github.com/fivetaku/gptaku_plugins  (insane-research / deep-research-kit)
+  License: MIT
+
+받침 retains insane-research's data-flow-lock architecture and evaluation
+methodology, and adds: deterministic risk classification + claim atomization,
+source snapshotting, an entailment gate with mechanical anchors, an N=3
+verification panel, explicit artifact-ownership + input-closure signing, and
+lexical/semantic source de-duplication. See docs/PRD.md.
