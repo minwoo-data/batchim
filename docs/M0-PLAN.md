@@ -21,11 +21,11 @@ Goal: **measure false-entail rate vs human labels** before any durability machin
 - [ ] **Experiment:** run M1a on the M0 benchmark, compute false-entail rate stratified by failure-mode. **Gate:** is M1a meaningfully better than baseline on fabrication/number? (quote-mining expected flat until M2.)
 
 ## M1b — Durability
-- [ ] Artifact ownership + schemas (Appendix A), referential/binding integrity (FR-A1–A5).
-- [ ] Input-closure manifest + single-rename commit + cross-version replay (FR-S1–S4).
-- [ ] Exit taxonomy + coverage invariant + body re-classification backstop (FR-X1–X3, FR-R1).
-- [ ] `dedup.py` → frozen `independence_partition.json` (FR-I0). Throttle/budget (FR-P2, NFR-1).
-- [ ] Golden fixtures for **every** §6.7 branch (D5); Appendix B normalization fixture corpus.
+- [~] Artifact ownership + schemas (Appendix A), referential/binding integrity (FR-A1–A5). **FR-A5 binding done** (validate_ledger: snapshot_hash/claim_text_hash/grade-copy → exit 2).
+- [~] Input-closure manifest + single-rename commit + cross-version replay (FR-S1–S4). **FR-S1 signed manifest done** (`manifest.py`: content-addressed run_id, sha256 over input-closure + code versions + enabled_producers; `verify()` detects tamper/skip). ☐ FR-S2 replay, ☐ FR-S3 single-rename `CURRENT` commit, ☐ FR-S4 superseded_by gate.
+- [~] Exit taxonomy + coverage invariant + body re-classification backstop (FR-X1–X3, FR-R1). **FR-X1/X3 done** (exit 0/1/2 + coverage invariant in validate_ledger). ☐ FR-R1 Phase-6 body backstop.
+- [x] `dedup.py` → frozen `independence_partition.json` (FR-I0). ☐ Throttle/budget (FR-P2, NFR-1).
+- [~] Golden fixtures for **every** §6.7 branch (D5) — `test_gate_core` covers all branches. ☐ Appendix B normalization fixture corpus.
 
 ## M2 — Panel (completes MVP)
 - [x] `panel.py` — N=3 prompt-diverse lenses (refute/source_quality/numeric_consistency), 2-of-3 consensus, quarantine on split/missing/failed (FR-P1). validate_ledger auto-enables M2 from `panel_consensus.jsonl`; verified requires panel consensus `entails` (§6.7-4b). SKILL.md Phase 4.6 wires the lens subagents. ✅

@@ -16,6 +16,7 @@ Derivation (caller or here): failed|malformed|missing OR anchors_ok=False
 Returns a verified_claims.json record (PRD Appendix A).
 """
 
+DECISION_TABLE_VERSION = "0.1.0-m1a"
 _AB = {"A", "B"}
 _PROMOTABLE = {"entails", "contradicts"}  # only these, and only if anchored
 

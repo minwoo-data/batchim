@@ -17,6 +17,7 @@ import os
 import re
 from urllib.parse import urlsplit, parse_qsl, urlunsplit, urlencode
 
+DEDUP_VERSION = "0.1.0-m1"
 _TRACK = re.compile(r"^(utm_|fbclid|gclid|mc_|ref|ref_src|cmpid|igshid)", re.I)
 _WORD = re.compile(r"\w+", re.UNICODE)
 SIMHASH_BITS = 64
@@ -117,7 +118,7 @@ def main():
             if line:
                 rows.append(json.loads(line))
     clusters = partition(rows)
-    doc = {"source_set_id": None, "dedup_version": "0.1.0-m1",
+    doc = {"source_set_id": None, "dedup_version": DEDUP_VERSION,
            "clusters": clusters, "schema_version": 1}
     with open(out, "w", encoding="utf-8") as w:
         json.dump(doc, w, ensure_ascii=False, indent=2)

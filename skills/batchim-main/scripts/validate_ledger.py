@@ -32,7 +32,9 @@ import os
 import sys
 
 import decide
+import manifest as mf
 
+VALIDATE_VERSION = "0.1.0-m1b"
 VALID_GRADES = {"A", "B", "C", "D", "E"}
 _VERDICT_LABELS = {"entails", "neutral", "contradicts"}
 
@@ -237,6 +239,12 @@ def validate(session, ledger_path, sources_path, out_dir, sign=False):
     _write_json(os.path.join(out_dir, "verified_claims.json"), verified)
     _write_json(os.path.join(out_dir, "unresolved_claims.json"), unresolved)
     _write_json(os.path.join(out_dir, "refuted_claims.json"), refuted)
+
+    # FR-S1: sign the input-closure (reproducible, corruption-/skip-evident).
+    enabled_producers = ["verifier"] + (["panel"] if m2_enabled else [])
+    code_versions = mf.collect_code_versions(VALIDATE_VERSION)
+    man = mf.build_manifest(session, enabled_producers, code_versions)
+    mf.write_manifest(session, man)
 
     n_verified_high = sum(1 for r in verified if r.get("high_risk"))
     _report(verified, unresolved, refuted, coverage_gaps)
