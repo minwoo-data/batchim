@@ -246,6 +246,8 @@ ledger가 준비되면 Phase 5 합성 전에 **아래 5단계를 순서대로** 
 python3 "$SP/dedup.py"          --session "$S"
 # 1b) [M3, 선택] 임베딩 백엔드가 있으면 의미 기반 정밀화(패러프레이즈 동기화 병합, NFR-5 폴백)
 python3 "$SP/semantic.py"       --session "$S"
+# 1c) [M3] provenance 정밀화 — 같은 wire/byline(통신사 재배포·동일 저자)을 같은 클러스터로
+python3 "$SP/provenance.py"     --session "$S"
 # 2) 결정론적 위험 분류 + atomization (NO LLM) → risk_classifications.jsonl
 python3 "$SP/classify_risk.py"  --session "$S"
 # 3) 소스 텍스트 동결 + content_hash → snapshots/<id>.txt, sources.jsonl 갱신

@@ -77,9 +77,11 @@ exists and computes the verdict**, the **panel** catches what code can't
    orchestration; only the query-gen + finding→vote logic is unit-tested.
 
 ### Tier 3 — provenance, ops, product
-7. **Real provenance independence** — wire/byline/syndication + first-published-vs-reprint
-   timestamp clustering, even a source-funding graph: distinguish *independent confirmation*
-   from *echo*. This is the credibility of "≥2 independent sources."
+7. ~~**Real provenance independence**~~ **DONE (wire/byline)** (`provenance.py`):
+   merges sources sharing a `wire` (syndicated wire story) or normalized `byline`
+   (one author, many outlets) so "≥2 independent" means independent *origin*, not URL.
+   High-precision, independence only tightens. SKILL.md Phase 3.5 runs it after
+   dedup/semantic. *Open:* timestamp-burst clustering and a source-funding graph.
 8. **External anchor for signing** (NG5 mitigation) — optional git-commit / RFC-3161
    timestamp / transparency-log of the manifest sha, so audit resists a motivated author.
 9. **Lock/heartbeat** (NFR-4, specced, unbuilt) — PID+start-time single-session lock with
