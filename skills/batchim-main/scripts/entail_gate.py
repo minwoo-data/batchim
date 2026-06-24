@@ -89,6 +89,7 @@ def build_verdict(claim, source, raw, snapshot_text):
         "occurrence_index": detail["occurrence_index"],
         "span_matched": detail["span_matched"],
         "numeric_ok": detail["numeric_ok"],
+        "polarity_ok": detail.get("polarity_ok", True),
         "referent_flags": detail.get("referent_flags", []),  # advisory → panel numeric lens
         "anchors_ok": ok,
         "source_grade": (source.get("quality_rating") or "").upper() or None,

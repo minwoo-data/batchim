@@ -174,6 +174,46 @@ def referent_flags(claim: str, span: str):
     return flags
 
 
+_WORD_RE = re.compile(r"[0-9A-Za-z가-힣']+")
+_NEG_ADJ = {"not", "never", "cannot", "neither", "nor", "without", "no"}
+_KO_NEG = ("않", "못", "아니", "없")
+
+
+def _is_neg(tok: str) -> bool:
+    t = tok.lower()
+    return t in _NEG_ADJ or t.endswith("n't") or any(k in tok for k in _KO_NEG)
+
+
+def _stem(t: str) -> str:
+    return t.lower()[:5]
+
+
+def _neg_adjacent(tokens, stem):
+    """Is the first content token with this stem immediately preceded by a negation?
+    Window = 1 (direct adjacency) keeps precision high: 'is NOT prohibited' fires,
+    'did not block the merger' does not flip 'merger' (its neighbor is 'the')."""
+    for i, t in enumerate(tokens):
+        if len(t) >= 4 and _stem(t) == stem:
+            return i > 0 and _is_neg(tokens[i - 1])
+    return False
+
+
+def polarity_ok(claim: str, span: str) -> bool:
+    """Reject a span that NEGATES what the claim asserts (or vice versa) on a shared
+    predicate: 'X is prohibited' vs 'X is not prohibited'. High precision via
+    direct-adjacency negation + 5-char stem; a shared content stem negated on
+    exactly one side ⇒ polarity mismatch ⇒ the span cannot support the claim. No
+    shared content stem ⇒ True (nothing to compare)."""
+    ct = _WORD_RE.findall(claim or "")
+    st = _WORD_RE.findall(span or "")
+    cstems = {_stem(t) for t in ct if len(t) >= 4}
+    sstems = {_stem(t) for t in st if len(t) >= 4}
+    for stem in (cstems & sstems):
+        if _neg_adjacent(ct, stem) != _neg_adjacent(st, stem):
+            return False
+    return True
+
+
 def numeric_ok(claim: str, span: str) -> bool:
     """Scale/unit-aware numeric consistency: every QUANTITY asserted in the CLAIM
     must appear in the SPAN at the **same scale and unit class** (so $4.2bn does
@@ -193,8 +233,9 @@ def anchors_ok(claim: str, span: str, snapshot: str):
     the boolean."""
     matched, start, end, occ = span_match(span, snapshot)
     nok = numeric_ok(claim, span)
-    return (matched and nok), {
-        "span_matched": matched, "numeric_ok": nok,
+    pol = polarity_ok(claim, span)
+    return (matched and nok and pol), {
+        "span_matched": matched, "numeric_ok": nok, "polarity_ok": pol,
         "span_char_start": start, "span_char_end": end, "occurrence_index": occ,
         "referent_flags": referent_flags(claim, span),
     }

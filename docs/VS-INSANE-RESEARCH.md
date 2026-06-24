@@ -58,8 +58,12 @@ exists and computes the verdict**, the **panel** catches what code can't
    surfaced on each verdict for the panel's numeric lens. *Still open:* full referent
    *resolution* (deciding the number truly belongs to "total" not "Data Center")
    stays an LLM/panel job — the anchor only flags the conflict.
-5. **Negation / scope anchor.** A code check for polarity mismatch ("X is NOT prohibited"
-   vs claim "X is prohibited") instead of trusting the verifier label alone.
+5. ~~**Negation / scope anchor.**~~ **DONE** (`anchors.polarity_ok`): a hard anchor
+   that rejects a span which negates the claim's predicate ("X is prohibited" vs
+   "X is not prohibited"). High precision via direct-adjacency negation + 5-char
+   stem, so "did not block the merger" doesn't false-flip "approved the merger".
+   English-strong; Korean negation (post-verbal) is best-effort. *Open:* broader
+   scope/quantifier handling ("only", "all but", "up to") still routes to the panel.
 6. **Contrary-retrieval lens** (PRD Q6). A panel lens that *independently searches* for
    refuting evidence rather than only reasoning over the cited sources — the strongest
    defense against omission/quote-mining (actively go find the exception).

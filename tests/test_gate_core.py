@@ -98,6 +98,26 @@ def test_numeric_scale_and_referent():
     check("anchors_ok: referent_flags present in detail", "referent_flags" in d)
 
 
+def test_polarity_anchor():
+    # clear negation inversion on a shared predicate -> mismatch
+    check("polarity: 'is prohibited' vs 'is not prohibited'", not anchors.polarity_ok("X is prohibited", "X is not prohibited"))
+    check("polarity: approved vs did not approve", not anchors.polarity_ok("The court approved the merger", "The court did not approve the merger"))
+    check("polarity: eligible vs not eligible", not anchors.polarity_ok("it is eligible", "it is not eligible"))
+    check("polarity: never vs plain", not anchors.polarity_ok("the rule applies", "the rule never applies"))
+    # same polarity -> ok
+    check("polarity: identical -> ok", anchors.polarity_ok("X is prohibited", "X is prohibited"))
+    check("polarity: both negated -> ok", anchors.polarity_ok("X is not eligible", "X is not eligible"))
+    # false-positive guards: adjacency keeps these clean
+    check("polarity guard: 'did not block' vs 'approved' (no shared neg predicate)",
+          anchors.polarity_ok("approved the merger", "did not block the merger"))
+    check("polarity guard: trailing clause doesn't flip", anchors.polarity_ok("banned smoking", "banned smoking in all offices"))
+    check("polarity guard: no shared content -> ok", anchors.polarity_ok("revenue rose", "profit increased"))
+    # as a HARD anchor: a polarity-inverted span fails anchors_ok even if verbatim-present
+    SNAP_P = "The Act is not prohibited under current law."
+    ok, d = anchors.anchors_ok("The Act is prohibited", "The Act is not prohibited", SNAP_P)
+    check("anchors_ok: polarity inversion fails the anchor", not ok and d["polarity_ok"] is False)
+
+
 def T(verdict, anchors_ok=True, cluster="cl", grade="A", sid="s"):
     return {"normalized_verdict": verdict, "anchors_ok": anchors_ok,
             "cluster_id": cluster, "quality_rating": grade, "source_id": sid}
@@ -179,6 +199,7 @@ if __name__ == "__main__":
     test_anchors()
     test_numeric_identifiers()
     test_numeric_scale_and_referent()
+    test_polarity_anchor()
     test_decide()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
