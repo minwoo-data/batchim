@@ -3,3 +3,4 @@ node_modules/
 __pycache__/
 .claude/*.local.md
 .omc/
+RESEARCH/

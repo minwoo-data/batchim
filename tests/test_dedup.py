@@ -49,6 +49,24 @@ def run():
     pu = dedup.partition(same_url)
     check("same canonical-URL collapses", pu["a"] == pu["b"])
 
+    # empty-text guard: distinct-URL sources with NO text must NOT collapse
+    # (regression: empty simhash=0 for all -> hamming 0 -> false near-dup merge)
+    no_text = [
+        {"id": "n1", "url": "https://rfc-editor.org/rfc/rfc9001"},
+        {"id": "n2", "url": "https://rfc-editor.org/rfc/rfc9114"},
+        {"id": "n3", "url": "https://example.dev/blog"},
+    ]
+    pn = dedup.partition(no_text)
+    check("empty-text: distinct URLs stay separate", len(set(pn.values())) == 3)
+
+    # `text` field (Appendix A schema) drives the simhash signal
+    txt = [
+        {"id": "t1", "url": "https://a.com/1", "text": "Clients MUST NOT offer TLS versions older than 1.3."},
+        {"id": "t2", "url": "https://b.com/2", "text": "QUIC version 1 uses TLS version 1.3 or greater as its handshake protocol."},
+    ]
+    pt = dedup.partition(txt)
+    check("text field: distinct content stays separate", pt["t1"] != pt["t2"])
+
 
 if __name__ == "__main__":
     run()

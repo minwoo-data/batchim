@@ -35,6 +35,10 @@ Goal: **measure false-entail rate vs human labels** before any durability machin
 ## M3 — RAG (post-MVP)
 - [ ] Embeddings + rerank + hybrid + semantic dedup (FR-I1, FR-R3).
 
+## E2E smoke findings (t6 HTTP/3·TLS1.3 — gate ran end-to-end; 3/3 correct: c1 verified, number-swap + fabrication both blocked)
+- [x] **dedup bug (fixed):** `dedup.py` read `snippet`/`title` (absent in Appendix A schema), so empty simhash=0 collapsed distinct sources into one cluster (independence loss). Now reads `text` + guards empty-token sources to canonical-URL-only. +regression tests.
+- [ ] **numeric anchor over-strict (open):** `numeric_ok` counts identifier/ordinal integers ("QUIC version **1**", "HTTP/3") as quantities a proof span must contain → false anchor failure → verified_recall loss. Fail-closed (safe; no false-entail), but needs a TDD refinement to distinguish identifiers from quantities (e.g. ignore bare single-digit integers in identifier context; keep decimals/years/%/currency/multi-digit). Affects FR-E2/§9 `verified_recall`.
+
 ## Open decisions (carry from PRD §11)
 - Q2 distribution (standalone repo + list in `haroom_plugins`), Q4 inherited-doc rewrite scope, Q6 verifier independent contrary-retrieval as an M2 lens.
 

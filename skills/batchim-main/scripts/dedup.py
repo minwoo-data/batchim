@@ -62,25 +62,41 @@ def _hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+def _source_text(s: dict) -> str:
+    """Text used for the simhash near-dup signal. Prefer the frozen/raw body
+    (`text`), fall back to snippet/title. (Appendix A sources have `text` pre-
+    snapshot; `snippet`/`title` are inherited-schema fallbacks.)"""
+    return s.get("text") or s.get("snippet") or s.get("title") or ""
+
+
 def partition(sources: list) -> dict:
-    """sources: [{id, url, snippet|title}]. Returns source_id -> cluster_id.
+    """sources: [{id, url, text|snippet|title}]. Returns source_id -> cluster_id.
     Deterministic: process in sorted(source_id) order; a source joins the first
-    existing cluster it is near (canonical-URL equal OR simhash within threshold)."""
+    existing cluster it is near (canonical-URL equal OR simhash within threshold).
+
+    Guard: the simhash signal only fires when BOTH sources have non-empty token
+    sets — otherwise empty/missing text yields simhash 0 for everything and
+    collapses genuinely distinct sources into one cluster (a false independence
+    loss). Empty-text sources cluster by canonical-URL only."""
     ordered = sorted(sources, key=lambda s: s.get("id", ""))
-    reps = []  # (cluster_id, canon_url, simhash)
+    reps = []  # (cluster_id, canon_url, simhash, has_text)
     assign = {}
     for s in ordered:
         sid = s.get("id")
         cu = canonical_url(s.get("url", ""))
-        sh = simhash(s.get("snippet") or s.get("title") or "")
+        txt = _source_text(s)
+        has_text = bool(_WORD.findall(txt.lower()))
+        sh = simhash(txt)
         joined = None
-        for cid, rcu, rsh in reps:
-            if (cu and cu == rcu) or _hamming(sh, rsh) <= HAMMING_THRESHOLD:
+        for cid, rcu, rsh, r_has in reps:
+            same_url = bool(cu) and cu == rcu
+            near = has_text and r_has and _hamming(sh, rsh) <= HAMMING_THRESHOLD
+            if same_url or near:
                 joined = cid
                 break
         if joined is None:
             joined = f"cl_{len(reps):04d}"
-            reps.append((joined, cu, sh))
+            reps.append((joined, cu, sh, has_text))
         assign[sid] = joined
     return assign
 
