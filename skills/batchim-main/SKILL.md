@@ -623,6 +623,15 @@ When resume is triggered:
 4. Resume from next pending phase
 5. Continue execution loop
 
+**Gate replay (FR-S2 — don't re-query what's frozen):** before re-spawning verifiers
+in Phase 4.5, run `python3 "$SP/replay.py"`-equivalent plan via `replay.plan(session)`:
+- **frozen** refs → reuse their `entailment_verdicts.jsonl` rows (no LLM call).
+- **requery** refs → spawn the isolated verifier (new ref, or the claim was re-versioned
+  so its `claim_text_hash` changed — explained, stale).
+- **tamper** refs (snapshot hash changed under a stable claim — unexplained) → **exit 2**.
+Likewise, before trusting a committed run (`commit.read_current`), `replay.check_versions(manifest)`
+the signed `*_version`s against the running tool — a mismatch ⇒ **exit 2 + migration**, never a silent upgrade.
+
 ```python
 for phase_num in range(1, 8):
     phase_key = f"phase_{phase_num}"
