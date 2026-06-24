@@ -1,13 +1,5 @@
-# Research session outputs (runtime artifacts)
-RESEARCH/
-# Local config / secrets
-config.json
-.env
-# Python
-__pycache__/
-*.pyc
-venv/
-.venv/
-# OS
 .DS_Store
-Thumbs.db
+node_modules/
+__pycache__/
+.claude/*.local.md
+.omc/

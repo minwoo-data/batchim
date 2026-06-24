@@ -1,0 +1,21 @@
+{
+  "name": "batchim",
+  "version": "0.1.0",
+  "description": "받침 (Batchim) — verification-gated deep research: isolated-verifier + N=3 panel entailment with code-enforced span/number anchors and an auditable, signed ledger.",
+  "author": {
+    "name": "Minwoo Park",
+    "url": "https://github.com/minwoo-data"
+  },
+  "homepage": "https://github.com/minwoo-data/batchim",
+  "repository": "https://github.com/minwoo-data/batchim",
+  "license": "MIT",
+  "keywords": [
+    "batchim",
+    "deep-research",
+    "entailment",
+    "citation-verification",
+    "multi-agent",
+    "hallucination",
+    "claude-code"
+  ]
+}
