@@ -57,10 +57,50 @@ def commit_run(session, man, source_dir=None):
                 shutil.copyfile(sp, os.path.join(staging, fn))
         os.replace(staging, target)        # atomic dir rename → run becomes durable
 
+    # capture the run CURRENT pointed at BEFORE we flip (to supersede it, FR-S4)
+    cur_path = os.path.join(session, "CURRENT")
+    prev_run_id = None
+    if os.path.isfile(cur_path):
+        try:
+            prev_run_id = json.load(open(cur_path, encoding="utf-8")).get("run_id")
+        except (OSError, ValueError):
+            prev_run_id = None
+
     # the SOLE atomic commit point: flip CURRENT to this run_id
-    _atomic_write(os.path.join(session, "CURRENT"),
+    _atomic_write(cur_path,
                   json.dumps({"run_id": run_id, "signature": man["signature"]}, ensure_ascii=False))
+
+    # FR-S4: a superseded run's manifest is annotated so Phase-7 won't publish from it.
+    if prev_run_id and prev_run_id != run_id:
+        _mark_superseded(os.path.join(runs, prev_run_id), run_id)
     return run_id
+
+
+def _mark_superseded(run_dir, by_run_id):
+    """Set superseded_by on a run's committed manifest (excluded from the signature,
+    so this does not invalidate it). No-op if the run/manifest is absent."""
+    man_path = os.path.join(run_dir, "manifest.json")
+    if not os.path.isfile(man_path):
+        return
+    man = json.load(open(man_path, encoding="utf-8"))
+    man["superseded_by"] = by_run_id
+    _atomic_write(man_path, json.dumps(man, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def assert_publishable(session, run_id):
+    """FR-S4 publish gate: a report names the run_id it was synthesized from;
+    refuse to publish if that run is superseded or fails verification. Raises
+    ValueError (caller → exit 2)."""
+    run_dir = os.path.join(session, "runs", run_id)
+    man_path = os.path.join(run_dir, "manifest.json")
+    if not os.path.isfile(man_path):
+        raise ValueError(f"run {run_id} has no committed manifest")
+    man = json.load(open(man_path, encoding="utf-8"))
+    if mf.sign(man) != man.get("signature"):
+        raise ValueError(f"run {run_id} manifest body ≠ signature (tampered)")
+    if man.get("superseded_by"):
+        raise ValueError(f"run {run_id} is superseded_by {man['superseded_by']} — re-synthesize from CURRENT")
+    return True
 
 
 def read_current(session):

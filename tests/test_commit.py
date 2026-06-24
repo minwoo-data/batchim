@@ -12,6 +12,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "skills", "batchim-main", "scripts"))
 import commit as cm           # noqa: E402
+import manifest as mf         # noqa: E402
 import validate_ledger as vl  # noqa: E402
 
 P = F = 0
@@ -111,7 +112,35 @@ def run():
     check("no CURRENT -> raises absent", ok)
 
 
+def test_supersede():
+    d = _session()
+    run_a = json.load(open(os.path.join(d, "CURRENT"), encoding="utf-8"))["run_id"]
+    check("run A publishable", cm.assert_publishable(d, run_a))
+
+    # change an input -> a different content-addressed run commits and supersedes A
+    with open(os.path.join(d, "artifacts", "claim_ledger.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"claim_id": "c2", "text": "y", "claim_text_hash": "sha256:c2"}) + "\n")
+    vl.validate(d, os.path.join(d, "artifacts", "claim_ledger.jsonl"),
+                os.path.join(d, "sources", "sources.jsonl"), os.path.join(d, "outputs"))
+    run_b = json.load(open(os.path.join(d, "CURRENT"), encoding="utf-8"))["run_id"]
+    check("run B is a new run_id", run_b != run_a)
+
+    man_a = json.load(open(os.path.join(d, "runs", run_a, "manifest.json"), encoding="utf-8"))
+    check("run A marked superseded_by B", man_a.get("superseded_by") == run_b)
+    # superseding A did NOT break A's signature (superseded_by excluded from sign)
+    check("run A signature still valid", mf.sign(man_a) == man_a["signature"])
+
+    # FR-S4 publish gate: refuse to publish a report synthesized from a superseded run
+    try:
+        cm.assert_publishable(d, run_a); ok = False
+    except ValueError as e:
+        ok = "superseded" in str(e)
+    check("publish from superseded run A -> refused", ok)
+    check("run B still publishable", cm.assert_publishable(d, run_b))
+
+
 if __name__ == "__main__":
     run()
+    test_supersede()
     print(f"\n{P} passed, {F} failed")
     sys.exit(1 if F else 0)

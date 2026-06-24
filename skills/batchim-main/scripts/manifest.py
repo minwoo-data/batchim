@@ -38,10 +38,11 @@ def _canon(obj):
 
 
 def sign(manifest):
-    """sha256 over the canonical manifest body, excluding the derived fields
-    `signature` and `run_id` (run_id is derived FROM the signature, so it must not
-    feed back into it)."""
-    body = {k: v for k, v in manifest.items() if k not in ("signature", "run_id")}
+    """sha256 over the canonical manifest body, excluding the derived/lifecycle
+    fields `signature`, `run_id` (derived FROM the signature), and `superseded_by`
+    (a post-hoc annotation set when a later run supersedes this one — FR-S4 — so
+    marking it must not invalidate the content signature)."""
+    body = {k: v for k, v in manifest.items() if k not in ("signature", "run_id", "superseded_by")}
     return "sha256:" + hashlib.sha256(_canon(body).encode("utf-8")).hexdigest()
 
 
