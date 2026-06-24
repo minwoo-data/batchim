@@ -1,46 +1,28 @@
 #!/usr/bin/env python3
 """
-validate_ledger.py — batchim의 **결정론적 검증 게이트** (control plane이 아니라 단일 체커).
+validate_ledger.py — 받침 **SOLE joiner / decision gate** (M1a; PRD §6.7, FR-A3/A5, FR-E3).
 
-설계 의도 (agent-council B 노선):
-  - 오케스트레이션(어디서·어떻게 검색할지)은 LLM/프롬프트(SKILL.md)에 맡긴다.
-  - 검증(핵심 주장이 교차검증·반증·1차소스 계약을 통과했는지)은 **코드로 강제**한다.
-  - LLM이 status를 자유롭게 쓰는 게 아니라, 이 스크립트가 status를 **계산**한다.
+데이터 흐름 락: 이 스크립트만이 `outputs/verified_claims.json`을 생산한다 — 합성(Phase 5)은
+그 파일만 근거로 하므로 게이트를 건너뛰면 합성 입력이 없다(우회 불가).
 
-핵심 강제 메커니즘 = "데이터 흐름 락":
-  - 이 스크립트만이 `outputs/verified_claims.json`을 생산한다.
-  - SKILL.md는 "Phase 5 합성은 verified_claims.json만 근거로 한다"고 계약한다.
-  - 따라서 체커를 건너뛰면 합성할 입력 자체가 없다(자기파괴적) → 우회 불가.
-  - 보강: 통과 시 ledger+verified의 sha256 `signature`를 state.json에 기록(위조 불가).
+M1a 책임 (서명/매니페스트는 M1b):
+  1. join — sources + claim_ledger + risk_classifications + independence_partition
+     + entailment_verdicts 를 읽어 high-risk atomic 주장마다 §6.7 튜플을 만든다.
+  2. effective_verdict — (claim, source)별 1개. producer=panel이 있으면 verifier를
+     supersede(FR-P3); M1a는 보통 verifier만.
+  3. anchors/verdict 정규화 — span_state=failed→failed, 미지 라벨→malformed,
+     anchors_ok=false entails/contradicts → decide가 neutral 처리.
+  4. decide.decide_claim(§6.7) — 코드가 status를 **계산**(LLM이 못 씀).
+  5. 바인딩 무결성(FR-A5): source_id 존재 / snapshot_hash==sources.content_hash /
+     claim_text_hash==ledger / source_grade==sources.quality_rating → 위반은 exit 2.
+  6. 커버리지 불변식(FR-X3): 모든 high-risk 주장은 status 또는 not_run_reason을 가진다.
 
-입력:
-  <session>/artifacts/claim_ledger.jsonl   (한 줄당 1개 claim record)
-  <session>/sources/sources.jsonl          (소스 레지스트리)
+종료 코드: 0 통과 · 1 verified 0건(정상 기권)/degraded · 2 구조적 에러.
 
-출력:
-  <session>/outputs/verified_claims.json   (status==verified 만 — 합성 allowlist)
-  <session>/outputs/unresolved_claims.json (미확정 — annex 전용)
-  <session>/outputs/refuted_claims.json    (반증 폐기 — annex 전용)
-  <session>/state.json 의 "verification" 블록(signature 포함)
-
-종료 코드:
-  0  통과 (verified allowlist 생성 완료, 프로세스 위반 없음 — 미확정은 정상)
-  1  프로세스 위반 (high-risk 주장에 counter_search 누락 등 → 추가 검색 후 재실행)
-  2  하드 에러 (스키마 깨짐·소스 id 미존재·A-E 등급 모순 → 데이터 수정 필요)
-
-claim_ledger.jsonl 레코드 스키마:
-  {
-    "claim_id": "clm_001",
-    "text": "주장 텍스트",
-    "risk": "high" | "normal",        # high = 수치/점유율/날짜/법령/인과/재무
-    "claim_type": "numeric|legal|causal|descriptive",
-    "source_ids": ["src_001", "src_003"],
-    "counter_search": "반증 검색 1회 요약 (high-risk 필수)",
-    "counter_refuted": false,
-    "conflicting": false,
-    "primary_source": true
-  }
-  (status / confidence 는 입력에서 신뢰하지 않고 체커가 덮어쓴다.)
+입력(<session>): sources/sources.jsonl, artifacts/{claim_ledger, risk_classifications,
+  entailment_verdicts}.jsonl, artifacts/independence_partition.json
+출력(<session>/outputs): verified_claims.json (전체 결정 레코드 = 합성 allowlist),
+  unresolved_claims.json, refuted_claims.json
 """
 
 import argparse
@@ -48,14 +30,15 @@ import hashlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
+
+import decide
 
 VALID_GRADES = {"A", "B", "C", "D", "E"}
-REQUIRED_CLAIM_FIELDS = ("claim_id", "text", "source_ids")
+_VERDICT_LABELS = {"entails", "neutral", "contradicts"}
 
 
+# --- IO ---------------------------------------------------------------------
 def _read_jsonl(path):
-    """JSONL 읽기. (records, errors) 반환."""
     records, errors = [], []
     if not os.path.exists(path):
         return records, [f"파일 없음: {path}"]
@@ -71,255 +54,226 @@ def _read_jsonl(path):
     return records, errors
 
 
-def _domain_of(src):
-    d = (src.get("domain") or "").strip().lower()
-    if d:
-        return d
-    # domain 없으면 url에서 host 근사 추출
-    url = (src.get("url") or "").strip().lower()
-    if "://" in url:
-        url = url.split("://", 1)[1]
-    return url.split("/", 1)[0] if url else ""
+def _read_json(path):
+    if not os.path.exists(path):
+        return None, [f"파일 없음: {path}"]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f), []
+    except (OSError, json.JSONDecodeError) as e:
+        return None, [f"{os.path.basename(path)} 파싱 실패: {e}"]
 
 
+def _write_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+# --- source registry (등급 SSOT) -------------------------------------------
 def check_source_registry(sources):
-    """소스 레지스트리 내부 정합성 검사. (sources_by_id, hard_errors) 반환."""
-    hard = []
-    sources_by_id = {}
-    domain_grades = {}  # domain -> set(grades) : A-E 등급 모순 검출용
-
+    hard, by_id = [], {}
     for i, s in enumerate(sources):
         sid = s.get("id")
         if not sid:
             hard.append(f"sources.jsonl[{i}] 'id' 누락")
             continue
-        if sid in sources_by_id:
+        if sid in by_id:
             hard.append(f"sources.jsonl: 중복 source id '{sid}'")
-        sources_by_id[sid] = s
-
+        by_id[sid] = s
         grade = (s.get("quality_rating") or "").strip().upper()
         if grade and grade not in VALID_GRADES:
-            hard.append(f"source '{sid}': 잘못된 등급 '{grade}' (A-E만 허용)")
-        dom = _domain_of(s)
-        if dom and grade in VALID_GRADES:
-            domain_grades.setdefault(dom, set()).add(grade)
-
-    # 같은 도메인이 한 run 안에서 서로 다른 등급을 받으면 모순 (예: Gartner B vs C)
-    for dom, grades in sorted(domain_grades.items()):
-        if len(grades) > 1:
-            hard.append(
-                f"A-E 등급 모순: 도메인 '{dom}'에 {sorted(grades)} 동시 부여 "
-                f"(quality_rubric.md SSOT로 단일화 필요)"
-            )
-    return sources_by_id, hard
+            hard.append(f"source '{sid}': 잘못된 등급 '{grade}' (A-E만)")
+    return by_id, hard
 
 
-def classify_claim(claim, sources_by_id):
-    """
-    주장 1건의 status를 결정론적으로 계산.
-    반환: (status, reason, process_violation: bool)
-      status ∈ {verified, unresolved, refuted}
-      process_violation=True → 종료코드 1 유발 (고칠 수 있는 절차 누락)
-    """
-    ids = claim.get("source_ids") or []
-    resolved = [sources_by_id[i] for i in ids if i in sources_by_id]
-    domains = {_domain_of(s) for s in resolved if _domain_of(s)}
-    roots = len(domains) if domains else len(resolved)
-    grades = {(s.get("quality_rating") or "").strip().upper() for s in resolved}
-    high = claim.get("risk") == "high"
-    counter = (claim.get("counter_search") or "").strip()
-
-    if claim.get("counter_refuted"):
-        return "refuted", "counter-search로 반박됨", False
-
-    # 1) high-risk인데 반증 검색 자체를 안 함 → 절차 위반 (코드로 강제하는 CoV)
-    if high and not counter:
-        return "unresolved", "high-risk인데 counter_search 누락 (CoV 미수행)", True
-
-    # 2) 독립 출처(도메인 기준) 2개 미만
-    if roots < 2:
-        return "unresolved", f"독립 출처(도메인) {roots}개 < 2", False
-
-    # 3) 출처 충돌 미해소
-    if claim.get("conflicting"):
-        return "unresolved", "출처 간 충돌 미해소", False
-
-    # 4) high-risk인데 1차 소스 미도달
-    if high and not claim.get("primary_source"):
-        return "unresolved", "high-risk인데 primary_source=false", False
-
-    # 5) high-risk인데 B등급 이상 출처가 하나도 없음
-    if high and not (grades & {"A", "B"}):
-        return "unresolved", "high-risk인데 B등급 이상 출처 없음", False
-
-    return "verified", "ok", False
+# --- verdict normalization + effective verdict ------------------------------
+def normalized_verdict(v):
+    """entailment_verdicts 행 → decide가 먹는 normalized_verdict."""
+    if v.get("validation_error") or v.get("fail_reason") == "malformed_label":
+        return "malformed"
+    if v.get("span_state") == "failed":
+        return "failed"
+    label = v.get("label")
+    return label if label in _VERDICT_LABELS else "malformed"
 
 
-def validate(ledger_path, sources_path, out_dir, state_path):
-    hard_errors = []
+_PRODUCER_RANK = {"verifier": 0, "panel": 1}  # panel supersedes verifier (FR-P3)
 
-    sources, src_parse_errs = _read_jsonl(sources_path)
-    hard_errors.extend(src_parse_errs)
-    sources_by_id, reg_errs = check_source_registry(sources)
-    hard_errors.extend(reg_errs)
 
-    claims, claim_parse_errs = _read_jsonl(ledger_path)
-    hard_errors.extend(claim_parse_errs)
+def effective_verdicts(verdicts):
+    """(claim_id, source_id)별 1개의 effective verdict로 축약. producer=panel 우선,
+    그다음 span_state=done 우선. 반환: {(claim_id, source_id): verdict_row}."""
+    best = {}
+    for v in verdicts:
+        key = (v.get("claim_id"), v.get("source_id"))
+        cur = best.get(key)
+        if cur is None:
+            best[key] = v
+            continue
+        rank = (_PRODUCER_RANK.get(v.get("producer"), -1),
+                1 if v.get("span_state") == "done" else 0)
+        crank = (_PRODUCER_RANK.get(cur.get("producer"), -1),
+                 1 if cur.get("span_state") == "done" else 0)
+        if rank > crank:
+            best[key] = v
+    return best
+
+
+# --- binding integrity (FR-A5) → exit 2 -------------------------------------
+def binding_errors(verdict, claim, source):
+    errs = []
+    sid = verdict.get("source_id")
+    if source is None:
+        return [f"verdict {verdict.get('verdict_id')}: 미등록 source '{sid}'"]
+    exp_snap = source.get("content_hash")
+    if exp_snap and verdict.get("snapshot_hash") != exp_snap:
+        errs.append(f"verdict {verdict.get('verdict_id')}: snapshot_hash 불일치 (source '{sid}')")
+    exp_grade = (source.get("quality_rating") or "").strip().upper() or None
+    v_grade = (verdict.get("source_grade") or "").strip().upper() or None
+    if v_grade is not None and v_grade != exp_grade:
+        errs.append(f"verdict {verdict.get('verdict_id')}: source_grade copy({v_grade}) != registry({exp_grade})")
+    if claim is not None:
+        exp_cth = claim.get("claim_text_hash")
+        if exp_cth and verdict.get("claim_text_hash") and verdict["claim_text_hash"] != exp_cth:
+            errs.append(f"verdict {verdict.get('verdict_id')}: claim_text_hash 불일치 (claim '{claim.get('claim_id')}')")
+    return errs
+
+
+# --- core join + decide -----------------------------------------------------
+def validate(session, ledger_path, sources_path, out_dir, sign=False):
+    art = os.path.join(session, "artifacts")
+    hard = []
+
+    sources, e = _read_jsonl(sources_path); hard += e
+    by_id, e = check_source_registry(sources); hard += e
+    claims, e = _read_jsonl(ledger_path); hard += e
+    risk_rows, e = _read_jsonl(os.path.join(art, "risk_classifications.jsonl")); hard += e
+    verdicts, e = _read_jsonl(os.path.join(art, "entailment_verdicts.jsonl")); hard += e
+    partition, _pe = _read_json(os.path.join(art, "independence_partition.json"))
+
+    claim_by_id = {c.get("claim_id"): c for c in claims}
+    # risk: parent rows only (atomized_from is None) carry the ledger-claim verdict.
+    risk_by_id = {r.get("claim_id"): r for r in risk_rows if r.get("atomized_from") is None}
+    clusters = (partition or {}).get("clusters", {}) if isinstance(partition, dict) else {}
+
+    # effective verdict per (claim, source) + binding integrity
+    eff = effective_verdicts(verdicts)
+    for (cid, sid), v in eff.items():
+        hard += binding_errors(v, claim_by_id.get(cid), by_id.get(sid))
+
+    if hard:
+        _report_hard(hard)
+        return 2
+
+    # group effective verdicts by claim
+    by_claim = {}
+    for (cid, sid), v in eff.items():
+        by_claim.setdefault(cid, []).append((sid, v))
 
     verified, unresolved, refuted = [], [], []
-    process_violations = []
+    coverage_gaps = []
 
-    for i, claim in enumerate(claims):
-        # 스키마 하드 검사
-        missing = [f for f in REQUIRED_CLAIM_FIELDS if not claim.get(f)]
-        if missing:
-            hard_errors.append(f"claim[{i}] 필수 필드 누락: {missing}")
-            continue
-        # 참조 무결성: source_id가 레지스트리에 존재해야 함
-        unknown = [i2 for i2 in (claim.get("source_ids") or []) if i2 not in sources_by_id]
-        if unknown:
-            hard_errors.append(
-                f"claim '{claim.get('claim_id')}': 미등록 source id {unknown}"
-            )
-            continue
+    for claim in claims:
+        cid = claim.get("claim_id")
+        rc = risk_by_id.get(cid)
+        is_high = bool(rc) and rc.get("computed_risk") == "high"
 
-        status, reason, violation = classify_claim(claim, sources_by_id)
-        record = dict(claim)
-        record["status"] = status
-        record["status_reason"] = reason
-        if status == "verified":
+        if not is_high:
+            # 비-high-risk: cite-and-write. 인용 소스 존재만 확인(§9).
+            record = {"claim_id": cid, "status": "cite_write", "status_reason": "non_high_risk",
+                      "high_risk": False, "conflict": False, "coverage_degraded": False}
             verified.append(record)
-        elif status == "refuted":
-            refuted.append(record)
-        else:
-            unresolved.append(record)
-            if violation:
-                process_violations.append(
-                    f"  - {claim.get('claim_id')}: {reason}"
-                )
+            continue
 
-    # 하드 에러면 산출물 쓰지 않고 즉시 실패 (exit 2)
-    if hard_errors:
-        _report(hard_errors, [], [], [], [], signature=None)
-        return 2
+        # 복합인데 atomize 안 됨 → fail-closed (ledger-write에서 lint됐어야 함)
+        if rc.get("atomic") is False:
+            record = {"claim_id": cid, "status": "unresolved",
+                      "status_reason": "needs_atomization", "high_risk": True,
+                      "conflict": False, "coverage_degraded": False}
+            unresolved.append(record)
+            continue
+
+        # §6.7 튜플
+        tuples = []
+        for sid, v in by_claim.get(cid, []):
+            src = by_id.get(sid)
+            tuples.append({
+                "normalized_verdict": normalized_verdict(v),
+                "anchors_ok": bool(v.get("anchors_ok")),
+                "cluster_id": clusters.get(sid, sid),  # partition 없으면 source=cluster
+                "quality_rating": (src.get("quality_rating") or "").strip().upper() if src else None,
+                "source_id": sid,
+            })
+
+        try:
+            rec = decide.decide_claim(cid, tuples)
+        except decide.StructuralError as se:
+            _report_hard([str(se)]); return 2
+        rec["high_risk"] = True
+
+        if not by_claim.get(cid):
+            coverage_gaps.append(cid)  # high-risk 주장에 verdict 0건 → missing(이미 unresolved)
+
+        st = rec["status"]
+        (verified if st == "verified" else refuted if st == "refuted" else unresolved).append(rec)
+
+    # 커버리지 불변식(FR-X3): 모든 high-risk 주장이 결정 레코드를 가져야 함
+    decided_high = {r["claim_id"] for r in (verified + unresolved + refuted) if r.get("high_risk")}
+    for cid, rc in risk_by_id.items():
+        if rc.get("computed_risk") == "high" and cid not in decided_high:
+            _report_hard([f"커버리지 위반: high-risk claim '{cid}' 결정 누락"]); return 2
 
     os.makedirs(out_dir, exist_ok=True)
     _write_json(os.path.join(out_dir, "verified_claims.json"), verified)
     _write_json(os.path.join(out_dir, "unresolved_claims.json"), unresolved)
     _write_json(os.path.join(out_dir, "refuted_claims.json"), refuted)
 
-    # 서명: verified + 원본 ledger 바이트의 sha256 (체커가 이 데이터로 실제 돌았다는 증거)
-    signature = _signature(verified, ledger_path)
+    n_verified_high = sum(1 for r in verified if r.get("high_risk"))
+    _report(verified, unresolved, refuted, coverage_gaps)
 
-    if state_path and os.path.exists(state_path):
-        _stamp_state(
-            state_path,
-            passed=not process_violations,
-            signature=signature,
-            counts=(len(verified), len(unresolved), len(refuted)),
-        )
-
-    _report(
-        hard_errors,
-        verified,
-        unresolved,
-        refuted,
-        process_violations,
-        signature=signature,
-    )
-    return 1 if process_violations else 0
+    # M1a: 서명 없음(M1b). verified high-risk가 0이면 정상 기권 → exit 1.
+    return 1 if n_verified_high == 0 else 0
 
 
-def _signature(verified, ledger_path):
-    h = hashlib.sha256()
-    h.update(json.dumps(verified, sort_keys=True, ensure_ascii=False).encode("utf-8"))
-    if os.path.exists(ledger_path):
-        with open(ledger_path, "rb") as f:
-            h.update(f.read())
-    return h.hexdigest()
+def _report_hard(errs):
+    print("=== validate_ledger: HARD ERROR (exit 2) ===", file=sys.stderr)
+    for e in errs:
+        print(f"  - {e}", file=sys.stderr)
 
 
-def _write_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def _stamp_state(state_path, passed, signature, counts):
-    try:
-        with open(state_path, "r", encoding="utf-8") as f:
-            state = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return
-    state["verification"] = {
-        "passed": passed,
-        "signature": signature,
-        "verified_count": counts[0],
-        "unresolved_count": counts[1],
-        "refuted_count": counts[2],
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-        "checker": "validate_ledger.py",
-    }
-    # atomic write: temp → rename
-    tmp = state_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, state_path)
-
-
-def _report(hard_errors, verified, unresolved, refuted, process_violations, signature):
+def _report(verified, unresolved, refuted, coverage_gaps):
     out = sys.stderr
-    print("=== validate_ledger 결과 ===", file=out)
-    if hard_errors:
-        print(f"\n[HARD ERROR] {len(hard_errors)}건 — 데이터 수정 후 재실행 (exit 2):", file=out)
-        for e in hard_errors:
-            print(f"  - {e}", file=out)
-        return
-    print(
-        f"  verified={len(verified)}  unresolved={len(unresolved)}  refuted={len(refuted)}",
-        file=out,
-    )
-    if process_violations:
-        print(
-            f"\n[FAIL] high-risk 주장 {len(process_violations)}건이 counter_search 누락 "
-            f"(exit 1) — 반증 검색 수행 후 ledger 갱신·재실행:",
-            file=out,
-        )
-        for v in process_violations:
-            print(v, file=out)
-    else:
-        print("  → 통과. 합성은 outputs/verified_claims.json 만 근거로 진행.", file=out)
-        if signature:
-            print(f"  signature={signature[:16]}…", file=out)
+    nv = sum(1 for r in verified if r.get("high_risk"))
+    print("=== validate_ledger 결과 (§6.7) ===", file=out)
+    print(f"  high-risk: verified={nv}  unresolved={len(unresolved)}  refuted={len(refuted)}  "
+          f"cite_write={sum(1 for r in verified if not r.get('high_risk'))}", file=out)
+    if coverage_gaps:
+        print(f"  주의: verdict 없는 high-risk {len(coverage_gaps)}건 → unresolved(missing)", file=out)
+    print("  → 합성은 outputs/verified_claims.json 만 근거.", file=out)
 
 
 def _resolve_paths(args):
-    if args.session:
-        base = args.session
-        ledger = args.ledger or os.path.join(base, "artifacts", "claim_ledger.jsonl")
-        sources = args.sources or os.path.join(base, "sources", "sources.jsonl")
-        out_dir = args.out_dir or os.path.join(base, "outputs")
-        state = args.state or os.path.join(base, "state.json")
-    else:
-        ledger = args.ledger
-        sources = args.sources
-        out_dir = args.out_dir or "."
-        state = args.state
-        if not (ledger and sources):
-            raise SystemExit("--session 또는 (--ledger AND --sources) 가 필요합니다.")
-    return ledger, sources, out_dir, state
+    base = args.session
+    if not base:
+        raise SystemExit("--session 이 필요합니다.")
+    ledger = args.ledger or os.path.join(base, "artifacts", "claim_ledger.jsonl")
+    sources = args.sources or os.path.join(base, "sources", "sources.jsonl")
+    out_dir = args.out_dir or os.path.join(base, "outputs")
+    return ledger, sources, out_dir
 
 
 def main():
-    p = argparse.ArgumentParser(description="batchim 결정론적 검증 게이트")
-    p.add_argument("--session", help="리서치 세션 폴더 (RESEARCH/{topic}_{ts})")
-    p.add_argument("--ledger", help="claim_ledger.jsonl 경로 (override)")
-    p.add_argument("--sources", help="sources.jsonl 경로 (override)")
-    p.add_argument("--out-dir", help="출력 폴더 (기본: <session>/outputs)")
-    p.add_argument("--state", help="state.json 경로 (기본: <session>/state.json)")
+    p = argparse.ArgumentParser(description="받침 SOLE joiner / §6.7 decision gate (M1a)")
+    p.add_argument("--session", help="리서치 세션 폴더")
+    p.add_argument("--ledger")
+    p.add_argument("--sources")
+    p.add_argument("--out-dir")
     args = p.parse_args()
-
-    ledger, sources, out_dir, state = _resolve_paths(args)
-    sys.exit(validate(ledger, sources, out_dir, state))
+    ledger, sources, out_dir = _resolve_paths(args)
+    sys.exit(validate(args.session, ledger, sources, out_dir))
 
 
 if __name__ == "__main__":
