@@ -44,9 +44,12 @@ exists and computes the verdict**, the **panel** catches what code can't
 1. **Real human labeling** (M0 0.4/0.5). The only thing that turns "0/6 informal"
    into a defensible "beats baseline." Tooling is ready (`bench/kappa`, `score_benchmark`,
    `freeze`, `RUBRIC.md`); needs ≥2 blind labelers + non-author topic lock.
-2. **Model-diverse panel.** Run the 3 lenses on *different models* (Claude + Codex/GPT),
-   not just different prompts — directly attacks the correlated-error caveat (R3) that
-   currently weakens the quote-mining defense's credibility.
+2. ~~**Model-diverse panel.**~~ **DONE (assignment + tracking)** (`panel.assign_lenses`
+   round-robins lenses across model backends; `panel_verdict` records `n_models` /
+   `model_diverse`). SKILL.md wires refute=Claude / source_quality=Codex etc. Diversity
+   is metadata (consensus rule unchanged) — directly attacks the correlated-error caveat
+   (R3). *Open:* actually executing a lens on Codex CLI is orchestration; and a
+   `require_model_diverse` strict mode could gate `verified` on it later.
 3. **Verifier-reliability harness.** Measure the isolated verifier's *own* false-entail
    rate vs human labels, so you know how much the anchors + panel are compensating for.
 

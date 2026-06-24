@@ -33,6 +33,16 @@ LENSES = ("refute", "source_quality", "numeric_consistency")
 _LABELS = {"entails", "neutral", "contradicts"}
 
 
+def assign_lenses(models, lenses=LENSES):
+    """Spread the lenses across the available model backends to maximize model
+    diversity (FR-P1 "model/config-diverse where available"; mitigates the
+    correlated-error caveat R3 — a single model voting 3 ways is prompt-diverse,
+    not independent). Deterministic round-robin over models sorted for stability.
+    With one model, all lenses fall on it (degrades cleanly). Returns {lens: model}."""
+    ms = sorted(m for m in (models or []) if m) or [None]
+    return {lens: ms[i % len(ms)] for i, lens in enumerate(lenses)}
+
+
 # --- pure consensus core (no I/O) -------------------------------------------
 def consensus(votes):
     """votes: iterable of label strings (only valid/done votes). Returns the
@@ -52,7 +62,7 @@ def consensus(votes):
 def panel_verdict(claim_id, lens_votes):
     """lens_votes: {lens: {"vote","vote_state",...}}. Returns a panel_consensus
     row. Missing or failed lenses are recorded and force no_consensus."""
-    valid, missing, failed = {}, [], []
+    valid, missing, failed, models = {}, [], [], []
     for lens in LENSES:
         v = lens_votes.get(lens)
         if v is None:
@@ -61,12 +71,19 @@ def panel_verdict(claim_id, lens_votes):
             failed.append(lens)
         else:
             valid[lens] = v["vote"]
+            if v.get("model_id"):
+                models.append(v["model_id"])
     cons = "no_consensus" if (missing or failed) else consensus(valid.values())
+    distinct_models = sorted(set(models))
     return {
         "claim_id": claim_id,
         "panel_consensus": cons,
         "votes": {lens: lens_votes.get(lens, {}).get("vote") for lens in LENSES},
+        "vote_models": {lens: lens_votes.get(lens, {}).get("model_id") for lens in LENSES},
         "n_valid": len(valid),
+        # FR-P1 / R3: ≥2 distinct models among the valid votes ⇒ not just prompt-diverse
+        "n_models": len(distinct_models),
+        "model_diverse": len(distinct_models) >= 2,
         "missing_lenses": missing,
         "failed_lenses": failed,
         "panel_round": 1,

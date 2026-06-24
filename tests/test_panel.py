@@ -29,13 +29,39 @@ def test_consensus():
     check("invalid votes dropped -> no_consensus", panel.consensus(["entails", "entails", "bogus"]) == "no_consensus")
 
 
-def _lv(refute, sq, num, states=None):
+def _lv(refute, sq, num, states=None, models=None):
     states = states or {}
+    models = models or {}
     out = {}
     for lens, vote in (("refute", refute), ("source_quality", sq), ("numeric_consistency", num)):
         if vote is not None:
-            out[lens] = {"vote": vote, "vote_state": states.get(lens, "done")}
+            row = {"vote": vote, "vote_state": states.get(lens, "done")}
+            if lens in models:
+                row["model_id"] = models[lens]
+            out[lens] = row
     return out
+
+
+def test_model_diversity():
+    # assign_lenses spreads lenses across distinct models (round-robin)
+    a = panel.assign_lenses(["claude", "codex"])
+    check("assign: uses both models", set(a.values()) == {"claude", "codex"})
+    check("assign: deterministic", a == panel.assign_lenses(["codex", "claude"]))
+    check("assign: one model -> all on it", set(panel.assign_lenses(["claude"]).values()) == {"claude"})
+
+    # panel verdict records model diversity
+    mv = {"refute": "claude", "source_quality": "codex", "numeric_consistency": "claude"}
+    r = panel.panel_verdict("c", _lv("entails", "entails", "entails", models=mv))
+    check("verdict: 2 distinct models", r["n_models"] == 2 and r["model_diverse"] is True)
+    check("verdict: vote_models recorded", r["vote_models"]["source_quality"] == "codex")
+
+    # all same model -> not model-diverse (correlated-error caveat applies)
+    same = {"refute": "claude", "source_quality": "claude", "numeric_consistency": "claude"}
+    r = panel.panel_verdict("c", _lv("entails", "entails", "entails", models=same))
+    check("verdict: single model -> not diverse", r["n_models"] == 1 and r["model_diverse"] is False)
+
+    # diversity is metadata, not a gate: consensus is unchanged by it
+    check("verdict: consensus still entails regardless of diversity", r["panel_consensus"] == "entails")
 
 
 def test_panel_verdict():
@@ -61,5 +87,6 @@ def test_panel_verdict():
 if __name__ == "__main__":
     test_consensus()
     test_panel_verdict()
+    test_model_diversity()
     print(f"\n{P} passed, {F} failed")
     sys.exit(1 if F else 0)

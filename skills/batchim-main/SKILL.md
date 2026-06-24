@@ -274,7 +274,9 @@ python3 "$SP/entail_gate.py"    --session "$S"
 - **source_quality** — 인용 소스가 충분히 1차적·독립적·적합한지.
 - **numeric_consistency** — 주장의 scope·수량·조건이 근거와 정확히 일치(확대·조건누락 없이)하는지.
 
-각 렌즈는 structured output `{ "claim_id","lens","vote":"entails|neutral|contradicts","vote_state":"done|failed","rationale":"…","model_id":"…","panel_prompt_hash":"sha256:…" }` 를 `artifacts/raw_panel_votes.jsonl`에 append. 그다음:
+**모델 다양화(FR-P1/R3):** 가능하면 렌즈를 **서로 다른 모델 백엔드**에 분산한다 — `panel.assign_lenses(["claude","codex"])`로 렌즈↔모델을 라운드로빈 배정(예: refute=Claude 서브에이전트, source_quality=Codex CLI). 단일 모델이 3표를 내면 prompt-diverse일 뿐 독립이 아니므로, `panel.py`가 `n_models`/`model_diverse`를 기록한다(합의 규칙은 불변 — 다양성은 신뢰도 메타데이터).
+
+각 렌즈는 structured output `{ "claim_id","lens","vote":"entails|neutral|contradicts","vote_state":"done|failed","rationale":"…","model_id":"…","panel_prompt_hash":"sha256:…" }` 를 `artifacts/raw_panel_votes.jsonl`에 append (`model_id`는 그 렌즈를 실행한 실제 모델). 그다음:
 
 ```bash
 python3 "$SP/panel.py" --session "$S"   # 2-of-3 합의 → panel_consensus.jsonl
