@@ -105,6 +105,21 @@ def _read_jsonl(path):
     return rows
 
 
+def _supersede(cur, new):
+    """Pick the surviving row when raw_panel_votes.jsonl holds MULTIPLE rows for one
+    (claim, lens) — a failed attempt plus its retry (retry-before-quarantine, mirrors
+    the verifier's timeout→retry). A `done` row with a valid label supersedes a
+    `failed`/malformed one; a later failure NEVER clobbers an earlier success (so a
+    flaky retry can't downgrade a real vote). Ties keep the later row."""
+    def voted(r):
+        return r is not None and r.get("vote_state") == "done" and r.get("vote") in _LABELS
+    if cur is None:
+        return new
+    if voted(cur) and not voted(new):
+        return cur
+    return new
+
+
 def run(session, raw_path=None, out_path=None):
     art = os.path.join(session, "artifacts")
     raw_path = raw_path or os.path.join(art, "raw_panel_votes.jsonl")
@@ -112,7 +127,9 @@ def run(session, raw_path=None, out_path=None):
 
     by_claim = {}
     for r in _read_jsonl(raw_path):
-        by_claim.setdefault(r.get("claim_id"), {})[r.get("lens")] = r
+        lenses = by_claim.setdefault(r.get("claim_id"), {})
+        lens = r.get("lens")
+        lenses[lens] = _supersede(lenses.get(lens), r)
 
     rows = [panel_verdict(cid, lv) for cid, lv in by_claim.items()]
     return rows, out_path

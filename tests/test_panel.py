@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Tests for 받침 panel.py: 2-of-3 consensus, quarantine on split/missing/failed.
 Run: python tests/test_panel.py"""
+import json
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                 "skills", "batchim-main", "scripts"))
@@ -84,9 +86,66 @@ def test_panel_verdict():
     check("failed lens -> no_consensus", r["panel_consensus"] == "no_consensus" and r["failed_lenses"] == ["refute"])
 
 
+def _run_with_rows(rows):
+    """Write rows to a temp raw_panel_votes.jsonl and run panel.run -> {cid: consensus}."""
+    d = tempfile.mkdtemp(prefix="batchim_panel_")
+    raw = os.path.join(d, "raw.jsonl")
+    with open(raw, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    out_rows, _ = panel.run(d, raw_path=raw, out_path=os.path.join(d, "out.jsonl"))
+    return {r["claim_id"]: r for r in out_rows}
+
+
+def _v(cid, lens, vote, state="done"):
+    return {"claim_id": cid, "lens": lens, "vote": vote, "vote_state": state}
+
+
+def test_retry_before_quarantine():
+    # a lens fails, then its RETRY succeeds (appended after) -> done supersedes failed,
+    # the claim is no longer wrongly quarantined (over-abstention recovered).
+    rows = [
+        _v("c", "refute", None, state="failed"),
+        _v("c", "source_quality", "entails"),
+        _v("c", "numeric_consistency", "entails"),
+        _v("c", "refute", "entails"),  # retry of the failed lens succeeds
+    ]
+    r = _run_with_rows(rows)["c"]
+    check("retry: failed lens recovered -> entails", r["panel_consensus"] == "entails")
+    check("retry: no failed lenses recorded after success", r["failed_lenses"] == [])
+
+    # ORDER-INDEPENDENCE: a late failure must NOT clobber an earlier success.
+    rows2 = [
+        _v("c", "refute", "entails"),          # success first
+        _v("c", "source_quality", "entails"),
+        _v("c", "numeric_consistency", "entails"),
+        _v("c", "refute", None, state="failed"),  # a flaky later attempt fails
+    ]
+    r2 = _run_with_rows(rows2)["c"]
+    check("retry: later failure does not clobber success", r2["panel_consensus"] == "entails")
+
+    # retry ALSO fails -> stays failed -> still quarantined (fail-closed, no false pass).
+    rows3 = [
+        _v("c", "refute", None, state="failed"),
+        _v("c", "source_quality", "entails"),
+        _v("c", "numeric_consistency", "entails"),
+        _v("c", "refute", None, state="failed"),  # retry also failed
+    ]
+    r3 = _run_with_rows(rows3)["c"]
+    check("retry: still-failed lens stays quarantined", r3["panel_consensus"] == "no_consensus"
+          and r3["failed_lenses"] == ["refute"])
+
+    # a real split is untouched by supersession (no transient failure to retry).
+    rows4 = [_v("c", "refute", "contradicts"), _v("c", "source_quality", "neutral"),
+             _v("c", "numeric_consistency", "entails")]
+    r4 = _run_with_rows(rows4)["c"]
+    check("retry: genuine 1-1-1 split still no_consensus", r4["panel_consensus"] == "no_consensus")
+
+
 if __name__ == "__main__":
     test_consensus()
     test_panel_verdict()
     test_model_diversity()
+    test_retry_before_quarantine()
     print(f"\n{P} passed, {F} failed")
     sys.exit(1 if F else 0)
