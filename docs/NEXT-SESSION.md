@@ -1,4 +1,4 @@
-# Next-session handoff — investigate over-abstention & cost
+# Next-session handoff — after over-abstention & cost session
 
 Paste the block below into a fresh session.
 
@@ -12,42 +12,48 @@ You are picking up the **batchim (받침)** project at `C:\Users\user\projects\b
 `classify_risk → dedup/semantic/provenance (independence) → snapshot → isolated verifier →
 entail_gate (code anchors: verbatim span-match + scale/unit numeric + polarity) →
 decide.py (§6.7) → validate_ledger (sole joiner) → M2 panel (N=3, quote-mining) →
-manifest/commit (signed, durable)`. Phase-7 gate = `eval_report.py`. Measurement tooling =
-`bench/` (kappa, score_benchmark, freeze). 334 tests green across 20 files
-(`for t in tests/test_*.py; do python "$t"; done`).
+manifest/commit (signed)`. Phase-7 gate = `eval_report.py`. Measurement = `bench/`.
+**21 test files / 377 assertions green** (`for t in tests/test_*.py; do python "$t"; done`).
 
-**What we've ALREADY measured:** false-entail (letting a WRONG claim through). On an informal
-3-topic e2e it went 1/6 → 0/6 with the M2 panel (`bench/baseline/m1a_informal_smoke.md`).
+## What the LAST session measured & shipped (read these first)
+1. **`bench/baseline/control_recall.md` + `bench/verified_recall.py` + `bench/control/control_claims.jsonl`**
+   — the over-abstention measurement (mirror of false-entail). Drove a control-heavy
+   fixture of TRUE high-risk claims (RFC/SEC/peer-reviewed) through the REAL
+   anchors+decide. **Finding: headline `verified_recall` was 0.667.** Root cause = the
+   numeric anchor treated version/identifier numbers ("TLS 1.3", "OAuth 2.0", "RFC 1918"
+   read as a year) as REQUIRED quantities.
+   **Fix (anchors.py):** unit-less decimals → a `ver` class that is CONFLICT-only in
+   `numeric_ok` (fails only on a DIFFERENT version in the span, not on omission);
+   identifier context now drops year-form numbers. Measured units (pct/mag/year) keep
+   omission-fail, so number/scale/percent swaps are still caught. **Result: 0.667 → 1.000**,
+   zero false-entail regression (swap test `test_gate_core :71` still green).
+2. **`budget.py` cost model** — `estimate_run`/`estimate_calls`/`estimate_tokens`/
+   `estimate_cost`/`format_estimate` + CLI. verifier = 1 per cited ref; panel = 3 lenses
+   per candidate; honors NFR-1 caps with a `[DEGRADED]` flag. Sanity-checked vs the smoke:
+   6 claims/~10 refs/3 candidates ≈ **19 calls / ~43.6k tokens**. SKILL.md Phase 4.5 prints
+   it pre-fan-out. Pricing is parameterized (`--price-in/--price-out`), not baked in.
+3. **`docs/TRIM-DECISION.md`** — removed 830 LOC of unused, untested, fork-inherited
+   `orchestrator.py`/`pipelines.py` (the latter held a SHADOW §6.7 status classifier that
+   threatened the sole-joiner invariant) + 3 stale PRD snapshots. SKILL.md references rehomed.
 
-**The gap to investigate THIS session — the under-examined failure mode:**
+## The open gaps THIS session should pick from
+1. **The one cheap recall win still on the table:** `control_recall.md` flags **panel-lens
+   retry before quarantine** — when a single lens fails/abstains, the claim is quarantined
+   (`panel:no_consensus`) even when true. Retrying the failed lens once (separate budget)
+   is precision-safe and recovers recall. Wire it in `panel.py` + SKILL.md Phase 4.6, with
+   a test. (The other over-abstentions — independence ≥2 clusters, A/B grade floor, rounding,
+   distributed-negation polarity — are deliberate §6.7 conservatism; do NOT loosen without a
+   measured false-entail cost on the signed benchmark. See the trade-off table.)
+2. **Still the biggest unmet dependency:** the **signed M0 benchmark** (`docs/M0-PLAN.md`
+   items 0.2–0.5) needs REAL κ≥0.7 human labels. Every number so far (false-entail 1/6→0/6,
+   verified_recall 0.667→1.0) is on INFORMAL author-known-answer sets. The launch gate (§9)
+   is blocked on this human step. Tooling is ready (`bench/kappa.py`, `score_benchmark.py`,
+   `freeze.py`); it needs labelers, not code.
+3. **Optional:** a rounding tolerance for the numeric anchor (`$130.5B` vs exact `$130,497M`
+   is currently flagged — defensible but strict). Measure the false-entail cost of a ±0.5%
+   same-scale tolerance before adding it. `d_nvda_rounded` in the control fixture is the probe.
 
-1. **Over-abstention / verified_recall** — does the gate reject TRUE claims too aggressively?
-   We optimized against false-entail but barely tested false-NEGATIVE. A gate that abstains on
-   everything has leak_rate 0 but is useless.
-   - Build a CONTROL-HEAVY fixture: ~10–15 *genuinely-true, well-evidenced* high-risk claims
-     (real topics: RFC specs, SEC filings, peer-reviewed numbers) with correct cited spans.
-   - Run them through the gate (you can drive it manually like the smoke did, or via
-     `bench/score_benchmark.py` with a gold set marking them control/should-verify).
-   - Measure `verified_recall = verified ÷ should-be-verified`. Find WHICH step over-rejects:
-     - numeric anchor too strict? (a claim quantity not in the proof span — `anchors._quantities`)
-     - polarity false-positive? (`anchors.polarity_ok`)
-     - independence requirement? (`decide.py` needs ≥2 distinct clusters incl ≥1 A/B)
-     - panel quarantine on `no_consensus`? (`panel.py`)
-   - Output: a verified_recall number + a ranked list of over-rejection causes + proposed fixes.
-
-2. **Cost** — nobody adopts a research tool without a "$ / tokens per run" number.
-   - Count LLM calls: 1 isolated verifier per cited (claim×source) ref + 3 panel lenses per
-     verified-candidate. Model tokens/run as a function of #high-risk-claims and #sources.
-   - Add a cost-estimate helper (extend `budget.py`; it already has the NFR-1 caps
-     MAX_VERIFIER_CALLS=120 etc.) and surface a pre-launch estimate.
-   - Sanity-check against the smoke runs.
-
-3. **Then decide trims** based on findings (a separate critique lives in
-   `docs/VS-INSANE-RESEARCH.md` and the chat history flagged: orchestrator.py + pipelines.py
-   are ~830 LOC of inherited dead helpers; old PRD-v0.1/2/3 are doc sprawl).
-
-**Constraints:** keep the 334-test suite green; commit per deliverable with the repo's
-`feat/fix/docs(...)` style + the Co-Authored-By trailer; push to `main`. Don't over-build —
-the meta-lesson is "prove the number before more engineering." Start by reading
-`docs/M0-PLAN.md`, `bench/baseline/m1a_informal_smoke.md`, `anchors.py`, `decide.py`,
-`bench/score_benchmark.py`.
+**Constraints:** keep the suite green; commit per deliverable with `feat/fix/docs(...)` +
+the Co-Authored-By trailer; push to `main`. "Prove the number before more engineering."
+Start by reading `bench/baseline/control_recall.md`, `bench/verified_recall.py`, `anchors.py`
+(the `_quantities`/`numeric_ok` ver-class logic), `panel.py`, `decide.py`.
