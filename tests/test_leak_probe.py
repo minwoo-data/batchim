@@ -43,6 +43,8 @@ def test_each_stratum_blocked_by_expected_mechanism():
         "l_polarity_flip": "anchor:polarity",
         "l_version_swap": "anchor:numeric",   # ver-class conflict still catches a version swap
         "l_quote_mine": "panel:contradicts",  # anchors pass; only the panel blocks
+        "l_referent_scope": "panel:contradicts",   # advisory referent flag -> panel
+        "l_referent_relrisk": "panel:contradicts",
     }
     for cid, cause in expect.items():
         r = recs[cid]
@@ -62,11 +64,28 @@ def test_anchor_strata_block_even_with_fooled_panel():
 
 
 def test_panel_is_load_bearing():
-    # the quote-mine LEAKS once the panel is disabled -> panel necessity is proven.
+    # quote-mine AND referent-overreach both LEAK once the panel is disabled -> the
+    # panel is load-bearing for every non-deterministic (anchors-pass) stratum.
     records = [lp.evaluate_claim(r) for r in lp._read_jsonl(FIX)]
     demo = lp.summarize(records)["panel_necessity_demo"]
-    check("a panel-necessity demo row exists", len(demo) == 1)
-    check("quote-mine leaks WITHOUT the panel", demo[0]["leaked_without_panel"] is True)
+    check("panel-necessity demo rows exist (quote-mine + referent)", len(demo) >= 2)
+    check("every demo leaks WITHOUT the panel", all(d["leaked_without_panel"] for d in demo))
+
+
+def test_referent_mismatch_caught_by_panel():
+    # referent_flags is built but was previously unmeasured by any probe: a same-number
+    # but different-REFERENT claim passes anchors (advisory flag) and must be caught by
+    # the panel. Confirms the flag fires AND the downstream catch holds.
+    recs = {r["claim_id"]: lp.evaluate_claim(r) for r in lp._read_jsonl(FIX)}
+    for cid in ("l_referent_scope", "l_referent_relrisk"):
+        r = recs[cid]
+        check(f"{cid}: anchors PASSED (referent flag is advisory)",
+              all(rd["anchors_ok"] for rd in r["refs"]))
+        check(f"{cid}: referent_flags fired", r["referent_flagged"] is True)
+        check(f"{cid}: blocked by the panel", r["blocked_by"] == "panel:contradicts")
+    s = lp.summarize(list(recs.values()))
+    check("referent mismatches reported in summary",
+          set(s["referent_flagged_blocked"]) >= {"l_referent_scope", "l_referent_relrisk"})
 
 
 if __name__ == "__main__":
@@ -74,5 +93,6 @@ if __name__ == "__main__":
     test_each_stratum_blocked_by_expected_mechanism()
     test_anchor_strata_block_even_with_fooled_panel()
     test_panel_is_load_bearing()
+    test_referent_mismatch_caught_by_panel()
     print(f"\n{P} passed, {F} failed")
     sys.exit(1 if F else 0)

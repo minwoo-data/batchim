@@ -20,7 +20,7 @@ block is attributed to the first blocking step.
 
 ## Result
 
-**`leak_rate = 0/8` — no wrong claim reached `verified`.**
+**`leak_rate = 0/10` — no wrong claim reached `verified`.**
 
 | wrong claim | stratum | blocked by | deterministic? |
 |---|---|---|---|
@@ -32,6 +32,8 @@ block is attributed to the first blocking step.
 | l_polarity_flip | "required" vs "not required" | `anchor:polarity` | ✅ code |
 | l_version_swap | TLS 1.3 claim vs TLS 1.2 span | `anchor:numeric` (ver) | ✅ code |
 | l_quote_mine | verbatim, number- & polarity-consistent; drops Art 5 exceptions | `panel:contradicts` | ⚠️ panel (not code) |
+| l_referent_scope | "data center revenue $130.5B" vs span "total revenue $130.5B" | `panel:contradicts` (referent flag fired) | ⚠️ panel (advisory→panel) |
+| l_referent_relrisk | "relative risk cut 50%" vs span "absolute risk reduction 50%" | `panel:contradicts` (referent flag fired) | ⚠️ panel (advisory→panel) |
 
 ### Two things this locks in
 1. **The 받침 thesis is now a test, not a story.** Fabrication and every number /
@@ -52,12 +54,28 @@ DISABLED and it **LEAKS to `verified`** (anchors pass, two A/B sources entail). 
 is the exact M2 launch-gate dependency — quote-mining is the one stratum the code
 half cannot close, so a run without the panel is unsafe for this class.
 
+### Referent mismatch — exercising a built-but-unmeasured defense
+`anchors.referent_flags` already detects same-number-different-REFERENT overreach
+(segment vs total, relative vs absolute risk, fiscal vs calendar, gross vs net), but
+no probe touched it. It is **advisory by design** — it does NOT fail `anchors_ok`; it
+rides along in the verdict and routes to the panel's numeric lens. So a referent
+overreach behaves exactly like quote-mining: anchors pass, the panel must catch it.
+- `l_referent_scope` ("data center revenue $130.5B" cited to "total revenue $130.5B")
+  and `l_referent_relrisk` ("relative risk cut 50%" cited to "absolute risk reduction
+  50%") both PASS anchors (same number) with the referent flag firing, then are
+  blocked by `panel:contradicts`.
+- `l_referent_scope_no_panel` (panel disabled) **LEAKS** — confirming the panel is
+  load-bearing for referent overreach too, not just quote-mining.
+This closes a measurement gap: the referent_flags → panel pathway now has probe
+coverage and a regression test, so it can't silently rot.
+
 ## Bottom line
 - Deterministic strata (fabrication / number / scale / percent / polarity / version):
   **0 leak, code-enforced, fooled-upstream-proof.**
-- Quote-mining: **0 leak with the panel, LEAKS without it** — the panel is mandatory,
-  as designed. Strengthening the panel (model diversity, retry-before-quarantine,
-  contrary-retrieval) directly hardens the only non-deterministic stratum.
+- Non-deterministic strata (quote-mining + referent overreach): **0 leak with the
+  panel, LEAK without it** — the panel is mandatory, as designed. Strengthening the
+  panel (model diversity, retry-before-quarantine, contrary-retrieval) directly hardens
+  every stratum the code half cannot close.
 - This is the floor to defend when evaluating any ANCHOR LOOSENING: re-run
   `leak_probe.py` and require `leak_rate` stays 0. **Already exercised:** the 0.05%
   numeric rounding tolerance (added so `$130.5B` anchors to `$130,497M`) was shipped

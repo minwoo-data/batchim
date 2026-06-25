@@ -69,16 +69,20 @@ def evaluate_claim(row):
         ref_detail.append({"source_id": ref["source_id"], "anchors_ok": ok,
                            "span_matched": detail["span_matched"],
                            "numeric_ok": detail["numeric_ok"],
-                           "polarity_ok": detail["polarity_ok"]})
+                           "polarity_ok": detail["polarity_ok"],
+                           "referent_groups": [f["group"] for f in detail.get("referent_flags", [])]})
 
     rec = decide.decide_claim(row["claim_id"], tuples, m2_enabled=m2,
                               panel_consensus=row.get("panel"))
     status = rec["status"]
     leaked = status == "verified"
+    # advisory referent mismatch (segment/total, relative/absolute risk, …) that the
+    # anchors PASS through and route to the panel — true iff any ref flagged one.
+    referent_flagged = any(rd["referent_groups"] for rd in ref_detail)
     return {"claim_id": row["claim_id"], "stratum": row.get("stratum"),
             "demonstrates": row.get("demonstrates"),
             "status": status, "status_reason": rec.get("status_reason"),
-            "leaked": leaked,
+            "leaked": leaked, "referent_flagged": referent_flagged,
             "blocked_by": None if leaked else _block_cause(row, tuples, ref_detail, rec),
             "refs": ref_detail, "note": row.get("note")}
 
@@ -122,6 +126,9 @@ def summarize(records):
         "leaks": [r["claim_id"] for r in leaks],
         "headline_n": len(head),
         "blocked_by_ranked": sorted(blocked_by.items(), key=lambda kv: (-kv[1], kv[0])),
+        # advisory referent mismatches that PASSED anchors and were caught downstream
+        "referent_flagged_blocked": [r["claim_id"] for r in head
+                                     if r["referent_flagged"] and not r["leaked"]],
         "panel_necessity_demo": [
             {"claim_id": r["claim_id"], "leaked_without_panel": r["leaked"]} for r in demo],
     }
@@ -144,6 +151,9 @@ def main():
     for cause, n in s["blocked_by_ranked"]:
         ids = [r["claim_id"] for r in records if r["blocked_by"] == cause]
         print(f"  {n:>2}  {cause:24} {ids}")
+    if s["referent_flagged_blocked"]:
+        print(f"\nreferent mismatches (anchors PASS, advisory flag -> panel caught): "
+              f"{s['referent_flagged_blocked']}")
     for d in s["panel_necessity_demo"]:
         verdict = "LEAKS (as expected)" if d["leaked_without_panel"] else "did NOT leak (unexpected!)"
         print(f"\npanel-necessity demo: {d['claim_id']} with panel disabled -> {verdict}")
