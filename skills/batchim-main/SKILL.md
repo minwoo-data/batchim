@@ -252,10 +252,15 @@ python3 "$SP/provenance.py"     --session "$S"
 python3 "$SP/classify_risk.py"  --session "$S"
 # 3) 소스 텍스트 동결 + content_hash → snapshots/<id>.txt, sources.jsonl 갱신
 python3 "$SP/snapshot.py"       --session "$S"
+# 3b) [선택] LLM fan-out 전 비용 추정 1줄 출력 (verifier=인용 ref당 1 + panel=후보당 3렌즈).
+#     N=high-risk atomic 주장 수(classify_risk 결과), 평균 인용 소스 수로 호출/토큰/$ 추정.
+python3 "$SP/budget.py" --claims <N_high_risk> --sources-per-claim <avg> --panel-frac 0.5
 # 4) [LLM] 격리 검증자 서브에이전트 → raw_verdicts.jsonl  (아래 계약 참조)
 # 5) anchors(verbatim span + numeric) 적용 + 바인딩 → entailment_verdicts.jsonl
 python3 "$SP/entail_gate.py"    --session "$S"
 ```
+
+> **비용**: 1회 run의 LLM 호출 = (high-risk 주장 × 인용 소스)개 격리 검증자 + (verified 후보 × 3렌즈)개 패널. NFR-1 캡(`MAX_VERIFIER_CALLS=120`, `MAX_PANEL_CALLS=90`)에 걸리면 `format_estimate`가 `[DEGRADED]`로 표시하고, run은 completed-degraded로 마감된다(미예약 span은 `unresolved(skipped_budget)` — false verified 불가). 스모크(6 주장·~10 ref·3 후보) ≈ 19 호출/43.6k 토큰. 가격은 illustrative이므로 `--price-in/--price-out`로 현재 단가를 넘겨 정확히 산출.
 
 **4단계 — 격리 검증자 서브에이전트 (데이터 흐름 락의 핵심)**
 
