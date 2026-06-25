@@ -118,6 +118,34 @@ def test_polarity_anchor():
     check("anchors_ok: polarity inversion fails the anchor", not ok and d["polarity_ok"] is False)
 
 
+def test_numeric_version_recall():
+    # verified_recall fix: a version-identifier DECIMAL ("TLS 1.3", "OAuth 2.0") is a
+    # ver-class label, NOT a required quantity — a true span proving the property
+    # without restating the version must still anchor (was a false-negative).
+    check("ver: 'TLS 1.3' decimal -> ver class", anchors._quantities("TLS 1.3 is faster") == {"ver:1.3"})
+    check("ver: 'OAuth 2.0' -> ver class (2.0 canon 2)", anchors._quantities("OAuth 2.0 tokens") == {"ver:2"})
+    check("recall: TLS 1.3 claim, span omits version -> ok",
+          anchors.numeric_ok("TLS 1.3 provides forward secrecy",
+                             "all public-key key exchange now provides forward secrecy"))
+    check("recall: OAuth 2.0 claim, span omits version -> ok",
+          anchors.numeric_ok("OAuth 2.0 bearer tokens go in the Authorization header",
+                             "the bearer token is transmitted in the Authorization request header field"))
+    # but a version CONFLICT (span carries a DIFFERENT version) is still caught
+    check("ver: 1.3 vs span 1.2 conflict still fails",
+          not anchors.numeric_ok("TLS 1.3 provides forward secrecy", "only TLS 1.2 is allowed here"))
+    check("ver: matching version in span -> ok",
+          anchors.numeric_ok("TLS 1.3 handshake", "the TLS 1.3 handshake is one round trip"))
+    # RFC/standard number that LOOKS like a year (1800–2099) must not become a quantity
+    check("ver: 'RFC 1918' number dropped (not a year)", anchors._quantities("RFC 1918 reserves the block") == set())
+    check("recall: RFC 1918 claim anchors to span without '1918'",
+          anchors.numeric_ok("RFC 1918 reserves the 10.0.0.0/8 block", "10.0.0.0/8 is allocated for private use"))
+    # a real year (not in identifier context) stays a measured quantity (omission fails)
+    check("year still measured: omission fails", not anchors.numeric_ok("filed in 2026", "filed last spring"))
+    check("year still measured: present -> ok", anchors.numeric_ok("filed in 2026", "the 2026 filing"))
+    # measured units unchanged: percent omission still fails
+    check("measured: percent omission still fails", not anchors.numeric_ok("rose 8%", "rose substantially"))
+
+
 def T(verdict, anchors_ok=True, cluster="cl", grade="A", sid="s"):
     return {"normalized_verdict": verdict, "anchors_ok": anchors_ok,
             "cluster_id": cluster, "quality_rating": grade, "source_id": sid}
@@ -199,6 +227,7 @@ if __name__ == "__main__":
     test_anchors()
     test_numeric_identifiers()
     test_numeric_scale_and_referent()
+    test_numeric_version_recall()
     test_polarity_anchor()
     test_decide()
     print(f"\n{PASS} passed, {FAIL} failed")

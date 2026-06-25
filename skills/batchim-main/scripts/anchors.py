@@ -126,10 +126,18 @@ def _canon_value(v):
 def _quantities(text: str):
     """Salient quantities normalized by SCALE and unit-class, so a scale/percent
     mismatch is caught even when the bare digits coincide ($4.2bn vs $4.2 million,
-    8% vs 8). Returns tokens `cls:value` with cls ∈ {pct, year, mag}; currency and
-    plain numbers fold to `mag` (the digits are the digits), so $4.2bn matches
-    "4.2 billion" but NOT "$4.2 million". Identifier/ordinal numbers are dropped
-    (same policy as `_salient_nums`)."""
+    8% vs 8). Returns tokens `cls:value` with cls ∈ {pct, year, mag, ver}:
+      - pct/year/mag are MEASURED values (omission-fails in `numeric_ok`); currency
+        and plain numbers fold to `mag`, so $4.2bn matches "4.2 billion" but NOT
+        "$4.2 million".
+      - **ver** = a unit-less decimal used as a VERSION/ratio label ("TLS 1.3",
+        "OAuth 2.0", "version 1.2"). It is NOT a measured quantity: a true proof
+        span often establishes the property without restating the version, so `ver`
+        is CONFLICT-only in `numeric_ok` (fails only when the span carries a DIFFERENT
+        version) — this is the verified_recall fix for version-identifier decimals.
+    Identifier/ordinal *integers* and year-form numbers in identifier context
+    ("version 1", "RFC 1918", "Section 12", "HTTP/3") are dropped — an RFC number is
+    not a measured year. (Decimals with a unit, e.g. "$4.2" or "1.3%", stay measured.)"""
     out = set()
     for m in _NUM.finditer(text or ""):
         tok = m.group().replace(",", "")
@@ -144,17 +152,23 @@ def _quantities(text: str):
         attached = start > 0 and (text[start - 1] in "/-#" or text[start - 1].isalpha())
         ident_ctx = attached or bool(_IDENT_BEFORE.search(before))
         multidigit = len(tok.replace(".", "")) >= 2
-        if not (is_decimal or is_year or has_unit or (not ident_ctx and multidigit)):
-            continue
         val = float(tok)
-        if pct:
-            out.add(f"pct:{_canon_value(val)}")
-        elif is_year and not mag_m:
+        if has_unit:                          # measured: $4.2bn, 8%, 1.3%, 500 million
+            if pct:
+                out.add(f"pct:{_canon_value(val)}")
+            else:
+                if mag_m:
+                    val *= _MAGNITUDE[mag_m.group(1).lower()]
+                out.add(f"mag:{_canon_value(val)}")
+        elif is_decimal:                      # unit-less decimal → version/ratio label
+            out.add(f"ver:{_canon_value(val)}")
+        elif ident_ctx:
+            continue                          # "version 1", "RFC 1918", "Section 12" → drop
+        elif is_year:
             out.add(f"year:{_canon_value(val)}")
-        else:
-            if mag_m:
-                val *= _MAGNITUDE[mag_m.group(1).lower()]
+        elif multidigit:
             out.add(f"mag:{_canon_value(val)}")
+        # else: bare single digit, no unit → drop
     return out
 
 
@@ -215,16 +229,29 @@ def polarity_ok(claim: str, span: str) -> bool:
 
 
 def numeric_ok(claim: str, span: str) -> bool:
-    """Scale/unit-aware numeric consistency: every QUANTITY asserted in the CLAIM
-    must appear in the SPAN at the **same scale and unit class** (so $4.2bn does
-    not satisfy $4.2 million, and 8% does not satisfy a bare 8). Catches number/
-    scale/percent SWAPS while ignoring identifier/ordinal numbers ("version 1").
-    Referent mismatch (segment vs total etc.) is advisory (`referent_flags`) and
-    routed to the panel, not failed here. No claim quantity ⇒ True."""
-    claim_q = _quantities(claim)
-    if not claim_q:
-        return True
-    return claim_q.issubset(_quantities(span))
+    """Scale/unit-aware numeric consistency. Two regimes (see `_quantities`):
+      - MEASURED quantities (pct/mag/year): every one asserted in the CLAIM must
+        appear in the SPAN at the same scale/unit class — omission OR mismatch fails
+        (so $4.2bn ≠ $4.2 million, 8% ≠ bare 8). Catches number/scale/percent SWAPS.
+      - VERSION decimals (ver): CONFLICT-only — a claim version fails only when the
+        span carries a DIFFERENT version (1.2 vs 1.3). If the span simply omits the
+        version (it proves the property without restating "TLS 1.3"), that is NOT a
+        swap → it passes here and entailment is left to the verifier/panel. This is
+        the verified_recall fix: version-identifier decimals no longer over-reject
+        true claims whose proof span doesn't echo the version number.
+    Referent mismatch (segment vs total etc.) is advisory (`referent_flags`), routed
+    to the panel, not failed here. No claim quantity ⇒ True."""
+    cq, sq = _quantities(claim), _quantities(span)
+    c_hard = {q for q in cq if not q.startswith("ver:")}
+    s_hard = {q for q in sq if not q.startswith("ver:")}
+    if not c_hard.issubset(s_hard):
+        return False
+    span_vers = {q.split(":", 1)[1] for q in sq if q.startswith("ver:")}
+    if span_vers:  # span asserts version(s): a claim version must be one of them
+        for q in cq:
+            if q.startswith("ver:") and q.split(":", 1)[1] not in span_vers:
+                return False
+    return True
 
 
 def anchors_ok(claim: str, span: str, snapshot: str):
