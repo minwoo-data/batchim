@@ -20,12 +20,13 @@ block is attributed to the first blocking step.
 
 ## Result
 
-**`leak_rate = 0/7` — no wrong claim reached `verified`.**
+**`leak_rate = 0/8` — no wrong claim reached `verified`.**
 
 | wrong claim | stratum | blocked by | deterministic? |
 |---|---|---|---|
 | l_fabrication | fabrication (span not in source) | `anchor:span` | ✅ code |
 | l_number_swap | $150B claim vs $130.5B span | `anchor:numeric` | ✅ code |
+| l_number_nearmiss | $131.2B claim vs $130.5B span (0.53%) | `anchor:numeric` | ✅ code (pins the 0.05% tolerance floor) |
 | l_scale_swap | $4.2B claim vs $4.2M span | `anchor:numeric` (scale) | ✅ code |
 | l_percent_swap | 8% claim vs 5% span | `anchor:numeric` (pct) | ✅ code |
 | l_polarity_flip | "required" vs "not required" | `anchor:polarity` | ✅ code |
@@ -57,5 +58,8 @@ half cannot close, so a run without the panel is unsafe for this class.
 - Quote-mining: **0 leak with the panel, LEAKS without it** — the panel is mandatory,
   as designed. Strengthening the panel (model diversity, retry-before-quarantine,
   contrary-retrieval) directly hardens the only non-deterministic stratum.
-- This is the floor to defend when evaluating any future ANCHOR LOOSENING (e.g. a
-  numeric rounding tolerance): re-run `leak_probe.py` and require `leak_rate` stays 0.
+- This is the floor to defend when evaluating any ANCHOR LOOSENING: re-run
+  `leak_probe.py` and require `leak_rate` stays 0. **Already exercised:** the 0.05%
+  numeric rounding tolerance (added so `$130.5B` anchors to `$130,497M`) was shipped
+  only after `l_number_nearmiss` (a 0.53% swap) confirmed the floor still blocks
+  near-miss swaps — recall recovered, `leak_rate` unchanged at 0.

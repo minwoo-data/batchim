@@ -146,6 +146,30 @@ def test_numeric_version_recall():
     check("measured: percent omission still fails", not anchors.numeric_ok("rose 8%", "rose substantially"))
 
 
+def test_numeric_rounding_tolerance():
+    # a lower-precision-but-true claim ($130.5B) anchors to the exact figure ($130,497M)
+    # under the 0.05% tolerance — verified_recall fix (was over-rejected).
+    check("rounding: $130.5B ~ $130,497M (0.0023%)",
+          anchors.numeric_ok("revenue of $130.5 billion", "revenue of $130,497 million"))
+    check("rounding: 4.2 billion ~ 4,200,000,000",
+          anchors.numeric_ok("about 4.2 billion users", "exactly 4,200,000,000 users"))
+    # but a near-miss SWAP (0.53%, 10x the tolerance) must still be blocked
+    check("near-miss: $131.2B vs $130.5B blocked (0.53%)",
+          not anchors.numeric_ok("a fine of $131.2 billion", "a fine of $130.5 billion"))
+    check("near-miss: 8.1% vs 8.0% blocked (1.25%)",
+          not anchors.numeric_ok("inflation rose 8.1%", "inflation rose 8.0%"))
+    # tolerance is SAME-class/SAME-scale only: scale and class mismatches unaffected
+    check("tolerance does not cross scale: $4.2B vs $4.2M still blocked",
+          not anchors.numeric_ok("revenue was $4.2 billion", "revenue was $4.2 million"))
+    # year and version stay EXACT (no tolerance): a year/version is a label, not a measurement
+    check("year exact: 2024 vs 2025 blocked", not anchors.numeric_ok("filed in 2024", "filed in 2025"))
+    check("version exact: 1.2 vs 1.3 blocked", not anchors.numeric_ok("TLS version 1.2", "older than 1.3"))
+    # _within helper boundary
+    check("_within: exact equal", anchors._within(5.0, 5.0, 0.0))
+    check("_within: inside tol", anchors._within(1000.0, 1000.4, 0.0005))
+    check("_within: outside tol", not anchors._within(1000.0, 1001.0, 0.0005))
+
+
 def T(verdict, anchors_ok=True, cluster="cl", grade="A", sid="s"):
     return {"normalized_verdict": verdict, "anchors_ok": anchors_ok,
             "cluster_id": cluster, "quality_rating": grade, "source_id": sid}
@@ -228,6 +252,7 @@ if __name__ == "__main__":
     test_numeric_identifiers()
     test_numeric_scale_and_referent()
     test_numeric_version_recall()
+    test_numeric_rounding_tolerance()
     test_polarity_anchor()
     test_decide()
     print(f"\n{PASS} passed, {FAIL} failed")

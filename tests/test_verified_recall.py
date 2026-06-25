@@ -40,7 +40,6 @@ def test_diagnostics_isolate_one_cause_each():
     expect = {
         "d_single_primary": "independence:lt2_clusters",
         "d_syndicated": "independence:lt2_clusters",
-        "d_nvda_rounded": "anchor:numeric",
         "d_paraphrase": "anchor:span",
         "d_panel_split": "panel:no_consensus",
         "d_polarity_fp": "anchor:polarity",

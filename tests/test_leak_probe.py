@@ -37,6 +37,7 @@ def test_each_stratum_blocked_by_expected_mechanism():
     expect = {
         "l_fabrication": "anchor:span",
         "l_number_swap": "anchor:numeric",
+        "l_number_nearmiss": "anchor:numeric",  # 0.53% swap > 0.05% tolerance -> still blocked
         "l_scale_swap": "anchor:numeric",
         "l_percent_swap": "anchor:numeric",
         "l_polarity_flip": "anchor:polarity",
@@ -53,8 +54,8 @@ def test_anchor_strata_block_even_with_fooled_panel():
     # the deterministic guarantee: anchor strata block even when verifier AND panel
     # are adversarially set to entails.
     recs = {r["claim_id"]: r for r in lp._read_jsonl(FIX)}
-    for cid in ("l_fabrication", "l_number_swap", "l_scale_swap", "l_percent_swap",
-                "l_polarity_flip", "l_version_swap"):
+    for cid in ("l_fabrication", "l_number_swap", "l_number_nearmiss", "l_scale_swap",
+                "l_percent_swap", "l_polarity_flip", "l_version_swap"):
         check(f"{cid}: panel set to entails (fooled) in fixture", recs[cid].get("panel") == "entails")
         out = lp.evaluate_claim(recs[cid])
         check(f"{cid}: still blocked despite fooled panel", not out["leaked"])

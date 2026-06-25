@@ -54,6 +54,15 @@ def span_match(span: str, snapshot: str):
 
 
 # --- numeric / date / unit consistency (anchor #2) --------------------------
+# A claim may state a MEASURED value at lower precision than its source ("$130.5
+# billion" cited to the 10-K's "$130,497 million") — a true claim that the strict
+# subset test over-rejected (verified_recall loss). A VERY TIGHT same-scale, same-
+# unit-class relative tolerance accepts that rounding while still rejecting swaps:
+# $130.5B≈$130.497B is 0.0023%, but a $131.2B-vs-$130.5B swap is 0.53% — 10× the
+# floor. Applies to continuous classes (mag/pct) ONLY; year and ver stay EXACT (a
+# year or version must match to the digit). Pinned by adversarial near-miss probes
+# in bench/adversarial/leak_claims.jsonl (leak_rate must stay 0).
+NUMERIC_REL_TOL = 0.0005  # 0.05%
 _NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _YEAR_RE = re.compile(r"(?:1[89]\d{2}|20\d{2})")
 # A number is an IDENTIFIER (not a required quantity) when an identifier word
@@ -228,6 +237,23 @@ def polarity_ok(claim: str, span: str) -> bool:
     return True
 
 
+def _by_class(quantities):
+    """Group a set of `cls:value` tokens (from `_quantities`) into {cls: [value,…]}."""
+    out = {}
+    for q in quantities:
+        cls, val = q.split(":", 1)
+        out.setdefault(cls, []).append(val)
+    return out
+
+
+def _within(a: float, b: float, rel_tol: float) -> bool:
+    """Relative closeness for measured values: |a-b| ≤ rel_tol · max(|a|,|b|). Exact
+    equality (a==b) always passes; rel_tol=0 reduces to exact match."""
+    if a == b:
+        return True
+    return abs(a - b) <= rel_tol * max(abs(a), abs(b))
+
+
 def numeric_ok(claim: str, span: str) -> bool:
     """Scale/unit-aware numeric consistency. Two regimes (see `_quantities`):
       - MEASURED quantities (pct/mag/year): every one asserted in the CLAIM must
@@ -241,15 +267,28 @@ def numeric_ok(claim: str, span: str) -> bool:
         true claims whose proof span doesn't echo the version number.
     Referent mismatch (segment vs total etc.) is advisory (`referent_flags`), routed
     to the panel, not failed here. No claim quantity ⇒ True."""
-    cq, sq = _quantities(claim), _quantities(span)
-    c_hard = {q for q in cq if not q.startswith("ver:")}
-    s_hard = {q for q in sq if not q.startswith("ver:")}
-    if not c_hard.issubset(s_hard):
-        return False
-    span_vers = {q.split(":", 1)[1] for q in sq if q.startswith("ver:")}
-    if span_vers:  # span asserts version(s): a claim version must be one of them
-        for q in cq:
-            if q.startswith("ver:") and q.split(":", 1)[1] not in span_vers:
+    cby, sby = _by_class(_quantities(claim)), _by_class(_quantities(span))
+    # MEASURED classes (omission OR mismatch fails). year is exact; mag/pct allow a
+    # tight rounding tolerance so a lower-precision-but-true claim isn't over-rejected.
+    for cls in ("mag", "pct", "year"):
+        cvals = cby.get(cls)
+        if not cvals:
+            continue
+        svals = sby.get(cls)
+        if not svals:
+            return False  # claim asserts a measured value the span omits → swap/unsupported
+        for cv in cvals:
+            if cls == "year":
+                if cv not in svals:
+                    return False
+            elif not any(_within(float(cv), float(sv), NUMERIC_REL_TOL) for sv in svals):
+                return False
+    # VERSION class: conflict-only and EXACT — a claim version fails only if the span
+    # carries a different one (1.2 vs 1.3); a pure omission passes.
+    span_vers = set(sby.get("ver", []))
+    if span_vers:
+        for cv in cby.get("ver", []):
+            if cv not in span_vers:
                 return False
     return True
 

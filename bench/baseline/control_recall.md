@@ -81,17 +81,17 @@ re-opens a false-entail path the gate exists to close):
 |---|---|---|
 | `independence:lt2_clusters` | a claim backed by **one** authoritative primary (single RFC) → unresolved | single-source verify re-opens the "one wire story, echoed" false-entail; keep ≥2 clusters. Possible narrow carve-out: an A-grade *primary* (standards body / filer) as its own sufficient cluster — needs a false-entail measurement first. |
 | `independence:no_ab_grade` | true claim cited only to C/D blogs | grade floor is the point; fix is better sourcing, not a lower floor. |
-| `panel:no_consensus` | true claim where one lens failed/abstained | retry the failed lens before quarantining (cheap recall win, no precision cost) — candidate fix. |
-| `anchor:numeric` (rounding) | `$130.5B` vs exact `$130,497M` | a real value delta; correct to flag → route to panel's numeric lens. Optional: a rounding tolerance (±0.5% same-scale) — measure false-entail cost first. |
+| `panel:no_consensus` | true claim where one lens failed/abstained | **DONE** — `panel.py` now retries-before-quarantine (a `done` vote supersedes a `failed` one; success never clobbered by a later failure). Precision-safe; consensus rule untouched. |
+| `anchor:numeric` (rounding) | `$130.5B` vs exact `$130,497M` | **DONE** — a 0.05% same-scale, same-class tolerance (`NUMERIC_REL_TOL`) recovers lower-precision-but-true claims (mag/pct only; year/ver stay exact). Measured safe: `leak_probe` `leak_rate` stayed **0** after adding a near-miss swap probe (`l_number_nearmiss`, 0.53% = 10× the floor → still blocked). |
 | `anchor:polarity` (distributed negation) | "does **not** support" vs "**no longer** supported" | `polarity_ok` uses window-1 adjacency for precision; "no longer X" isn't adjacent. Widening the window risks polarity false-*negatives* (missed real inversions). Leave; the verifier handles it. |
 
 ## Bottom line
-- The gate's **intrinsic** over-abstention (anchors, given cooperating upstream) was
-  a **single bug class** — version/identifier numbers — now fixed: headline
-  verified_recall **0.667 → 1.000**, with zero false-entail regression on the
-  number-swap stratum.
-- The rest of over-abstention is **deliberate §6.7 conservatism** (independence /
-  grade / panel). The one cheap, precision-safe recall win left on the table is
-  **panel-lens retry before quarantine** (next-step candidate). Everything else
-  trades recall for the false-entail guarantees and should not move without a
-  measured precision cost on the signed benchmark.
+- The gate's **intrinsic** over-abstention (anchors, given cooperating upstream) was a
+  small set of fixable issues, now all closed: version/identifier numbers (`ver` class),
+  the rounding tolerance, and panel-lens retry. Headline verified_recall **0.667 → 1.000**
+  (now 13/13, incl. the recovered rounding case), with the false-entail floor held at
+  **`leak_rate` 0** the whole time (`bench/baseline/leak_probe.md`, near-miss swaps pinned).
+- The remaining over-abstention is **deliberate §6.7 conservatism** (independence ≥2
+  clusters / A-B grade floor) — it trades recall for the false-entail guarantees and
+  should not move without a measured precision cost on the **signed** benchmark (the one
+  still-blocking dependency: real κ≥0.7 human labels).
