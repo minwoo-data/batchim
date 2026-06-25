@@ -341,7 +341,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/batchim-main/scripts/validate_ledger.py" -
 3. 결과를 ledger에 머지: Workflow confirmed → confidence 상향, refuted → Refuted 섹션, 여전히 inconclusive → Unresolved 유지.
 4. **기본 모드는 이 단계를 건너뛴다(빠름).** strict 모드만 감사 가능한 재검증을 붙인다.
 
-→ Skill(넓이) + Workflow(정밀)를 결합하되 **전체가 아니라 고위험/미확정 주장에만** 위임해 비용을 제어한다. 핸드오프 선별 로직은 `scripts/pipelines.py`의 `strict_verification_handoff()` 참조.
+→ Skill(넓이) + Workflow(정밀)를 결합하되 **전체가 아니라 고위험/미확정 주장에만** 위임해 비용을 제어한다. 핸드오프 선별 규칙: `outputs/unresolved_claims.json` + `computed_risk=="high"`인 주장만 재검증 대상으로 추리고, `verified`/`cite_write`는 제외한다(상태 판정의 권위는 `validate_ledger.py`/`decide.py` 단일 조인자에만 있다).
 
 ### Phase 7: Output & Packaging
 - Format for optimal readability
@@ -708,9 +708,9 @@ State management scripts are available at:
 | `entail_gate.py` | **게이트 (Phase 4.5).** raw_verdicts에 anchors(verbatim span + numeric) 적용·바인딩 → `entailment_verdicts.jsonl`. (`anchors.py` 사용) | **authoritative** |
 | `validate_ledger.py` | **단일 조인자 (필수).** 모든 게이트 산출을 조인, §6.7로 status 계산(`decide.py`), `verified_claims.json` 생산. 이것만 합성 allowlist를 만든다 | **authoritative** — Phase 5/7 진입 게이트 |
 | `eval_report.py` | **Phase-7 하드게이트 (§9, 필수).** 새 스키마 정합(텍스트는 ledger 조인, high-risk verified vs cite_write 구분). 구조지표(citation/missing-proof/span-match/coverage) + 정직성(leak/coverage/orphan/degraded) + 무결성(manifest) → FAIL=exit 2 | **authoritative** — Phase 7 마감 |
-| `orchestrator.py` / `pipelines.py` | 세션·state 헬퍼, agent prompt 정적 자산. phase 전이/plan 스텁은 실행 권위 없음(LLM이 이 SKILL.md로 오케스트레이션) | helper (정적 자산) |
+| `budget.py` | fan-out throttle + reserve-before-dispatch 예산(NFR-1 캡) + pre-launch 비용 추정(`estimate_run`/`format_estimate`) | helper |
 
-> **오케스트레이션은 프롬프트(이 SKILL.md)가, 검증은 코드(`validate_ledger.py`)가 담당한다.** `orchestrator.py`/`pipelines.py`의 state-machine·plan 스텁은 참고용 헬퍼일 뿐 실행 권위가 없으니, 검증/합성 게이트는 반드시 `validate_ledger.py`로 강제한다.
+> **오케스트레이션은 프롬프트(이 SKILL.md)가, 검증은 코드(`validate_ledger.py`)가 담당한다.** phase 전이·plan·핸드오프 선별은 모두 이 SKILL.md의 프롬프트 로직이며 별도 state-machine 스크립트를 두지 않는다(과거 fork-상속 `orchestrator.py`/`pipelines.py`는 §6.7 상태 판정을 중복 구현해 단일 조인자 불변식을 위협하므로 제거됨 — `docs/TRIM-DECISION.md`). 검증/합성 게이트는 반드시 `validate_ledger.py`로 강제한다.
 
 ---
 
